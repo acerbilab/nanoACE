@@ -36,13 +36,16 @@ Implemented modules:
 - [gaussian_toy.py](gaussian_toy.py): Gaussian toy with two continuous latents, fixed
   latent priors, online training/evaluation CLI, analytic grid posterior,
   posterior predictive, checkpoint helpers, and plotting.
+- [gp1d.py](gp1d.py): GP-1D regression example with continuous kernel
+  hyperparameter latents, discrete kernel selection, online CPU float64 GP
+  sampling, and a fixed diagnostic plot.
 - [diagnostics.py](diagnostics.py): reusable grid-query helpers for marginal and
   two-variable AR diagnostics.
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Planned next example: GP-1D regression with continuous kernel hyperparameter
-latents plus discrete kernel selection.
+Next work: train and inspect the GP-1D example long enough to decide whether its
+diagnostic is informative or needs a stronger oracle.
 
 ## Setup
 
@@ -87,13 +90,13 @@ Useful Gaussian controls:
 
 Common artifact names used by the Gaussian example:
 
-- `artifacts/gaussian_toy_ambiguous.pt`
-- `artifacts/gaussian_toy_ambiguous.png`
+- `artifacts/gaussian_toy.pt`
+- `artifacts/gaussian_toy.png`
 
 Regenerate the longer-run diagnostic and checkpoint pair:
 
 ```powershell
-.\.venv\Scripts\python.exe gaussian_toy.py --steps 5000 --save-checkpoint artifacts\gaussian_toy_ambiguous.pt --plot-path artifacts\gaussian_toy_ambiguous.png
+.\.venv\Scripts\python.exe gaussian_toy.py --steps 10000 --save-checkpoint artifacts\gaussian_toy.pt --plot-path artifacts\gaussian_toy.png
 ```
 
 For a short run that verifies the script starts and completes:
@@ -113,6 +116,32 @@ Save and reuse a small Gaussian checkpoint:
 ```powershell
 .\.venv\Scripts\python.exe gaussian_toy.py --save-checkpoint artifacts/gaussian_toy.pt
 .\.venv\Scripts\python.exe gaussian_toy.py --eval-only --load-checkpoint artifacts/gaussian_toy.pt
+```
+
+Run the GP-1D example:
+
+```powershell
+.\.venv\Scripts\python.exe gp1d.py
+```
+
+The GP-1D example trains on functions sampled online from four kernels: RBF,
+Matern-1/2, Matern-3/2, and periodic. Its diagnostic is not an exact posterior
+oracle. It plots a fixed sampled function, ACE's predictive mean/uncertainty,
+the posterior over the discrete kernel latent, and marginals for
+`log_lengthscale` and `log_outputscale`. The fixed diagnostic uses irregular,
+clustered context locations so nearby observations can reveal local roughness;
+evenly spaced sparse points made kernel and lengthscale inference mostly
+uninformative.
+
+Common artifact names used by the GP-1D example:
+
+- `artifacts/gp1d.pt`
+- `artifacts/gp1d.png`
+
+For a short GP-1D run:
+
+```powershell
+.\.venv\Scripts\python.exe gp1d.py --steps 20 --batch-size 16
 ```
 
 ## Design Notes

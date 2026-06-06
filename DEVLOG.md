@@ -9,6 +9,34 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-06 — GP-1D executable example
+
+- **Standalone GP file.** `gp1d.py` owns the GP regression example end to end:
+  online function sampling, command-line training/evaluation, checkpoint helpers, and a
+  fixed diagnostic plot. It follows the same local-file pattern as `gaussian_toy.py`
+  rather than introducing a generic training framework.
+- **Latents.** The example uses two continuous latents, `log_lengthscale` and
+  `log_outputscale`, plus one discrete `kernel` latent with four classes: RBF,
+  Matern-1/2, Matern-3/2, and periodic. This exercises the shared continuous MDN head,
+  the shared `Kmax` categorical head, and discrete value embeddings when a kernel latent
+  is occasionally revealed as context.
+- **Sampler.** GP functions are generated online. Kernel matrices and Cholesky sampling
+  run on CPU float64, then sampled tensors move to the selected ACE device. There is no
+  sharded data layer yet; add one only when a real GP training run needs saved pools.
+- **Diagnostic.** Unlike the Gaussian toy, GP-1D does not yet compute an exact posterior
+  over kernel and hyperparameters. The fixed diagnostic plots a sampled function,
+  observed context points, ACE predictive mean/uncertainty, kernel posterior bars, and
+  continuous latent marginals. The fixed context locations are irregular and clustered,
+  including nearby pairs/triples, because sparse evenly spaced points do not say much
+  about local roughness and make kernel/lengthscale inference mostly guesswork. It is a
+  plausibility check, not a correctness oracle.
+- **Current retained GP artifact.** A 20k-step run saves `artifacts/gp1d.pt` and
+  `artifacts/gp1d.png`. With the clustered fixed diagnostic, the current checkpoint gives
+  the true Matern-3/2 kernel the largest posterior mass, but still underestimates output
+  scale; treat it as a working first artifact, not a converged model.
+
+---
+
 ## 2026-06-06 — Gaussian toy implementation
 
 - **Core implementation.** `ace.py` now contains the current source-of-truth
@@ -278,7 +306,8 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   **plus kernel selection as a discrete latent** (this is what exercises the discrete
   path so it isn't dead code). Use a **deliberately diverse kernel set** (RBF, Matern,
   periodic, ...) so the sampled functions look genuinely different and classification is
-  meaningful. Uses the generate/save/pool path (data generation is Cholesky-bound).
+  meaningful. The first implementation is online in `gp1d.py`; use the generate/save/pool
+  path only if longer training makes online Cholesky sampling the bottleneck.
 - **"Add a third task" is the canonical user/agent extension** — nano ships exactly two.
   Generality lives in the *architecture* (free: attention over a token stream), not in
   the *example surface*.
@@ -288,8 +317,9 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 - `ace.py`         — config → embedder → block → forward → heads → loss   (THE file)
 - `diagnostics.py` — reusable grid-query helpers for marginal/AR diagnostics
 - `gaussian_toy.py` — executable Gaussian toy: generator, training, oracle, eval, checkpoint, plot
-- `data.py`        — generators + save/load (sharded; future GP path)
-- `train.py`       — loop + resume (future GP path)
+- `gp1d.py`        — executable GP-1D example: generator, training, eval, checkpoint, plot
+- `data.py`        — generators + save/load (future sharded saved-pool path)
+- `train.py`       — loop + resume (future sharded saved-pool path)
 - Dependencies: **torch only** in the core; plotting imports are isolated to `gaussian_toy.py`.
   Match the pinned workstation-tested stack unless there is a specific reason to change it:
   `torch==2.11.0+cu128` via `https://download.pytorch.org/whl/cu128` on the RTX 4060

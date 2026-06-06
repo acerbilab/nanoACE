@@ -21,22 +21,31 @@ python -m venv .venv
 # run the Gaussian example (trains, then prints oracle-vs-model posterior moments)
 .\.venv\Scripts\python.exe gaussian_toy.py
 
+# run the GP-1D example (trains, then prints fixed-diagnostic metrics)
+.\.venv\Scripts\python.exe gp1d.py
+
 # short run that verifies the script starts and completes
 .\.venv\Scripts\python.exe gaussian_toy.py --steps 20 --batch-size 32
+.\.venv\Scripts\python.exe gp1d.py --steps 20 --batch-size 16
 
 # force CPU
 .\.venv\Scripts\python.exe gaussian_toy.py --device cpu --steps 20
+.\.venv\Scripts\python.exe gp1d.py --device cpu --steps 20 --batch-size 16
 ```
 
 There is no separate test suite, linter, or build step. **Verification = run `gaussian_toy.py` and
 check the printed model posterior moments track the analytic `oracle` moments**. The
 Gaussian toy has an analytic grid posterior in the same file. Keep that check loose, not
-a strict quality gate (see DEVLOG "Open questions").
+a strict quality gate (see DEVLOG "Open questions"). For `gp1d.py`, verification is a
+short run plus visual inspection of the fixed diagnostic plot. The fixed GP context uses
+clustered x-locations so local roughness is visible, but it still does not have an exact
+posterior oracle.
 
 ## Architecture (the cross-file picture)
 
 Everything routes through one idea: **variables as tokens**. The model is in
-`ace.py`; `gaussian_toy.py` is the current executable task example built on top of it.
+`ace.py`; `gaussian_toy.py` and `gp1d.py` are the current executable task examples built
+on top of it.
 
 - **Data model (`ace.py`).** `Variable` is the static schema (name, `kind` data/latent,
   continuous/discrete + `cardinality`, `transform`, optional prior grid). `Tokens` is a
@@ -82,6 +91,6 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   experiment-management machinery such as Slurm scripts, cache provenance, prefetch
   systems, and resume matrices should not be copied into this repository.
 - **Currently implemented:** `ace.py` for the model, `gaussian_toy.py` for the executable
-  Gaussian example and analytic oracle, and `diagnostics.py` for grid queries. `data.py`
-  / `train.py` and the GP-1D example are planned in DEVLOG "Layout" but not yet built;
-  build in dependency order, model and Gaussian diagnostic first.
+  Gaussian example and analytic oracle, `gp1d.py` for the executable GP regression
+  example, and `diagnostics.py` for grid queries. `data.py` / `train.py` are planned in
+  DEVLOG "Layout" but not yet built.
