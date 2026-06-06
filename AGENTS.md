@@ -14,29 +14,29 @@ on is in [paper/](paper/) as markdown.
 Windows / PowerShell, using the project virtualenv explicitly:
 
 ```powershell
-# setup (CUDA wheel pinned to the local stack: torch 2.11.0+cu128)
+# setup (CUDA wheel pinned in requirements.txt: torch 2.11.0+cu128)
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# run the Gaussian-toy demo (trains, then prints oracle-vs-model posterior moments)
-.\.venv\Scripts\python.exe demo.py
+# run the Gaussian example (trains, then prints oracle-vs-model posterior moments)
+.\.venv\Scripts\python.exe gaussian_toy.py
 
-# fast smoke test
-.\.venv\Scripts\python.exe demo.py --steps 20 --batch-size 32
+# short run that verifies the script starts and completes
+.\.venv\Scripts\python.exe gaussian_toy.py --steps 20 --batch-size 32
 
 # force CPU
-.\.venv\Scripts\python.exe demo.py --device cpu --steps 20
+.\.venv\Scripts\python.exe gaussian_toy.py --device cpu --steps 20
 ```
 
-There is no separate test suite, linter, or build step. **Verification = run `demo.py` and
-check the printed model posterior moments track the analytic `oracle` moments** (the
-Gaussian toy has a closed-form grid posterior; `evaluate()` in `demo.py` is the correctness
-oracle). Keep that check loose, not a strict quality gate (see DEVLOG "Open questions").
+There is no separate test suite, linter, or build step. **Verification = run `gaussian_toy.py` and
+check the printed model posterior moments track the analytic `oracle` moments**. The
+Gaussian toy has an analytic grid posterior in the same file. Keep that check loose, not
+a strict quality gate (see DEVLOG "Open questions").
 
 ## Architecture (the cross-file picture)
 
-Everything routes through one idea: **variables as tokens**. The whole model is in
-`ace.py`; `demo.py` is one task built on top of it.
+Everything routes through one idea: **variables as tokens**. The model is in
+`ace.py`; `gaussian_toy.py` is the current executable task example built on top of it.
 
 - **Data model (`ace.py`).** `Variable` is the static schema (name, `kind` data/latent,
   continuous/discrete + `cardinality`, `transform`, optional prior grid). `Tokens` is a
@@ -70,15 +70,18 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
 ## Conventions and gotchas
 
 - **One global `prior_bins`.** `ACE.__init__` rejects a `Variable` whose `prior_bins`
-  differs from the config; ragged per-variable prior grids are out of scope for now.
+  differs from the config; ragged per-variable prior grids are not implemented in this
+  version.
 - **Priors attach to latents only**, and values are expected pre-normalized to ~[-1, 1] at
   generation time — the embedders/heads assume that range.
 - **Target tokens may carry truth** in `value`/`value_index` while `mode == QUERY`; the
   embedder ignores it and the loss uses it. For prediction-only calls, pass dummy values
   and simply don't call `.log_prob`.
-- **`temp/` is a _different_, much larger research project** (`gp-regression*`), gitignored.
-  Mine it for ideas (rectangular attention, CPU float64 GP sampling) but never import its
-  fleet-management structure (caching/Slurm/prefetch/resume matrices). See DEVLOG.
-- **Currently implemented:** `ace.py` + `demo.py` only. `data.py` / `train.py` (sharded
-  generate→save→train) and the GP-1D example are planned in DEVLOG "Layout" but not yet
-  built — build in dependency order, model and toy first.
+- **`temp/` is not part of nanoACE.** If a gitignored `temp/` directory is present, treat
+  it as archived external experiment code. It may contain useful ideas, but large
+  experiment-management machinery such as Slurm scripts, cache provenance, prefetch
+  systems, and resume matrices should not be copied into this repository.
+- **Currently implemented:** `ace.py` for the model, `gaussian_toy.py` for the executable
+  Gaussian example and analytic oracle, and `diagnostics.py` for grid queries. `data.py`
+  / `train.py` and the GP-1D example are planned in DEVLOG "Layout" but not yet built;
+  build in dependency order, model and Gaussian diagnostic first.

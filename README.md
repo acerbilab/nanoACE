@@ -28,14 +28,16 @@ the paper, markdown, and original ACE code:
 
 ## Current Status
 
-The first working slice is implemented:
+Implemented modules:
 
 - [ace.py](ace.py): core `Variable`, `Tokens`, `Batch`, ACE transformer, shared
   continuous MDN head, shared masked categorical head, prediction object, loss,
   and autoregressive sampling helper.
-- [demo.py](demo.py): Gaussian toy with two continuous latents, fixed latent
-  priors, online training, and an analytic grid posterior diagnostic that
-  deliberately evaluates an ambiguous low-context posterior.
+- [gaussian_toy.py](gaussian_toy.py): Gaussian toy with two continuous latents, fixed
+  latent priors, online training/evaluation CLI, analytic grid posterior,
+  posterior predictive, checkpoint helpers, and plotting.
+- [diagnostics.py](diagnostics.py): reusable grid-query helpers for marginal and
+  two-variable AR diagnostics.
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
@@ -44,8 +46,8 @@ latents plus discrete kernel selection.
 
 ## Setup
 
-Use a local virtual environment. The pinned stack matches the local GPU setup
-used in related experiments:
+Use a local virtual environment. The current requirements pin the PyTorch CUDA
+wheel that has been tested on this workstation:
 
 - `torch==2.11.0+cu128`
 - PyTorch CUDA runtime 12.8
@@ -58,16 +60,18 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Run the demo:
+Run the Gaussian example:
 
 ```powershell
-.\.venv\Scripts\python.exe demo.py
+.\.venv\Scripts\python.exe gaussian_toy.py
 ```
 
-The demo trains online, prints posterior moment diagnostics against the analytic
-Gaussian oracle, and saves a plot to `artifacts/gaussian_toy.png` by default.
-Evaluation uses one fixed three-observation case, defined directly in
-[demo.py](demo.py), so the diagnostic does not depend on runtime case selection.
+The Gaussian example trains online, prints posterior moment diagnostics against
+the analytic oracle, and saves a plot to `artifacts/gaussian_toy.png` by default.
+For comparability, evaluation always uses the same deterministic batch: three
+observed `y` values, plus the sampled `mu` and `log_sigma` used only for printed
+diagnostics. The constants live in [gaussian_toy.py](gaussian_toy.py), so rerunning the
+same checkpoint regenerates the same plotted case.
 The plot also compares the posterior predictive density for a new `y`; the
 analytic predictive is computed by marginalizing over the posterior grid, not by
 plugging posterior moments into a Gaussian.
@@ -75,40 +79,40 @@ Training sometimes reveals one latent as a context value and asks for the other,
 so the autoregressive diagnostic is trained on the conditional latent queries it
 uses at evaluation time.
 
-Useful demo controls:
+Useful Gaussian controls:
 
 ```powershell
-.\.venv\Scripts\python.exe demo.py --latent-context-prob 0.25
+.\.venv\Scripts\python.exe gaussian_toy.py --latent-context-prob 0.25
 ```
 
-The current retained local diagnostic artifacts are:
+Common artifact names used by the Gaussian example:
 
 - `artifacts/gaussian_toy_ambiguous.pt`
 - `artifacts/gaussian_toy_ambiguous.png`
 
-Regenerate that retained diagnostic:
+Regenerate the longer-run diagnostic and checkpoint pair:
 
 ```powershell
-.\.venv\Scripts\python.exe demo.py --steps 5000 --save-checkpoint artifacts\gaussian_toy_ambiguous.pt --plot-path artifacts\gaussian_toy_ambiguous.png
+.\.venv\Scripts\python.exe gaussian_toy.py --steps 5000 --save-checkpoint artifacts\gaussian_toy_ambiguous.pt --plot-path artifacts\gaussian_toy_ambiguous.png
 ```
 
-For a quick smoke test:
+For a short run that verifies the script starts and completes:
 
 ```powershell
-.\.venv\Scripts\python.exe demo.py --steps 20 --batch-size 32
+.\.venv\Scripts\python.exe gaussian_toy.py --steps 20 --batch-size 32
 ```
 
 To force CPU:
 
 ```powershell
-.\.venv\Scripts\python.exe demo.py --device cpu --steps 20
+.\.venv\Scripts\python.exe gaussian_toy.py --device cpu --steps 20
 ```
 
-Save and reuse a small demo checkpoint:
+Save and reuse a small Gaussian checkpoint:
 
 ```powershell
-.\.venv\Scripts\python.exe demo.py --save-checkpoint artifacts/gaussian_toy.pt
-.\.venv\Scripts\python.exe demo.py --eval-only --load-checkpoint artifacts/gaussian_toy.pt
+.\.venv\Scripts\python.exe gaussian_toy.py --save-checkpoint artifacts/gaussian_toy.pt
+.\.venv\Scripts\python.exe gaussian_toy.py --eval-only --load-checkpoint artifacts/gaussian_toy.pt
 ```
 
 ## Design Notes
@@ -149,7 +153,8 @@ Before making architectural changes, read [DEVLOG.md](DEVLOG.md). The project
 values local, readable code over benchmark machinery. In particular:
 
 - keep `ace.py` as the main readable implementation file;
-- avoid importing fleet-management ideas from `temp/`;
+- if a gitignored `temp/` directory is present, treat it as archived external
+  experiment code and copy ideas only when they clearly fit this repository;
 - keep examples small and diagnostic;
 - prefer changing the implementation when a simpler or more robust tweak serves
   ACE's conditioning interface better than paper fidelity.

@@ -9,22 +9,29 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
-## 2026-06-06 — First working Gaussian-toy slice
+## 2026-06-06 — Gaussian toy implementation
 
 - **Core implementation.** `ace.py` now contains the current source-of-truth
   implementation: `Variable`, `Tokens`, `Batch`, separated context/target transformer
   blocks, shared continuous MDN head, shared masked `Kmax` categorical head, prediction
   object, target NLL loss, and `sample_ar`.
-- **Hero diagnostic.** `demo.py` trains the Gaussian toy online under fixed latent priors,
+- **Executable Gaussian toy file.** `gaussian_toy.py` owns the Gaussian example end to end:
+  online batch generation, command-line training/evaluation, oracle math, checkpoint
+  helpers, and plotting. There is no separate generic command-line wrapper because that
+  wrapper would still depend on the Gaussian file to be understood. Reusable grid query
+  helpers live in `diagnostics.py`.
+- **Gaussian diagnostic.** `gaussian_toy.py` trains the Gaussian toy online under fixed latent priors,
   compares ACE marginals to an analytic grid posterior, and includes an autoregressive
-  two-latent joint diagnostic. The Gaussian hero no longer injects random runtime prior
-  tokens: amortizing over arbitrary prior histograms made the small demo much harder than
-  the posterior-learning behavior we want to inspect first. Runtime prior tokens remain
-  in the core ACE representation for later examples. The AR diagnostic averages the two
+  two-latent joint diagnostic. The Gaussian example no longer injects random runtime prior
+  tokens: amortizing over arbitrary prior histograms made the small Gaussian example much
+  harder than the posterior-learning behavior this example is meant to inspect. Runtime
+  prior tokens remain in the core ACE representation for examples that explicitly train prior
+  conditioning. The AR diagnostic averages the two
   factorizations `p(mu)p(log_sigma|mu)` and `p(log_sigma)p(mu|log_sigma)` in probability
-  space so the displayed joint posterior is not tied to one arbitrary order. The held-out
-  diagnostic uses one fixed three-observation case defined directly in `demo.py`; no
-  runtime candidate selection, scoring, or eval-case artifact is needed.
+  space so the displayed joint posterior is not tied to one arbitrary order. The
+  deterministic evaluation batch is defined in `gaussian_toy.py`: three observed `y` values,
+  plus latent truth for printed diagnostics. Keeping that batch constant makes plots
+  comparable across runs without a separate evaluation-case selector.
   The plot includes a posterior predictive panel for a new `y`: the analytic curve is the
   posterior mixture `sum p(mu, log_sigma | D) Normal(y | mu, sigma)`, not a Gaussian
   plug-in approximation.
@@ -32,12 +39,13 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   `0.25`): one latent is sometimes revealed as a `VALUE` token and the other remains a
   target. Without that, AR conditional queries are syntactically valid but
   out-of-distribution for the toy model.
-- **Artifacts are optional and regenerable.** The demo can save a diagnostic plot and a
-  lightweight checkpoint under `artifacts/`, but these are convenience outputs rather
-  than load-bearing repository assets. `--eval-only --load-checkpoint` verifies a saved
-  toy state.
-- **Environment.** The local `.venv` uses the same stack as the related GP experiments:
-  `torch==2.11.0+cu128`, PyTorch CUDA runtime 12.8, and the RTX 4060 Laptop GPU.
+- **Artifacts are optional and regenerable.** `gaussian_toy.py` can save a diagnostic plot
+  and a lightweight checkpoint under `artifacts/`, but these are convenience outputs
+  rather than load-bearing repository assets. `--eval-only --load-checkpoint` verifies a
+  saved checkpoint.
+- **Environment.** The project currently pins the PyTorch CUDA wheel tested on this
+  workstation: `torch==2.11.0+cu128`, PyTorch CUDA runtime 12.8, and the RTX 4060 Laptop
+  GPU.
 
 ---
 
@@ -48,7 +56,7 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 - **What it is.** A single-purpose, legible implementation of ACE that a coding agent
   can read end-to-end and extend. The optimization target is the *source* — legibility
   and extensibility — not a packaged runtime artifact (pretrained weights, a stable
-  calling contract, an MCP tool). That packaging is a non-goal *for now*, not an
+  calling contract, an MCP tool). That packaging is outside the current scope, not an
   anti-goal: a clean `condition().predict()` surface is part of legible source anyway,
   so doing this well keeps that path open rather than foreclosing it.
 - **What "nano" means.** Minimal *concepts* and maximal *locality* — not minimal lines,
@@ -68,9 +76,9 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   clearer.
 - **Tiebreaker when simplicity vs. performance conflict.** Simplicity is the default. A
   feature *can* buy its way in if it improves predictions or real-training throughput —
-  but it pays rent in legibility (inline shape contracts, an obvious why). Pure
-  fleet-management complexity (clusters, multi-seed pools) cannot buy in at all, because
-  nano never hits the scale where it pays off.
+  but it pays rent in legibility (inline shape contracts, an obvious why). Large
+  experiment-management complexity (clusters, multi-seed pools) is outside this
+  repository's scale target.
 - **"naïve" is not a synonym for "legible."** Evaluate case by case (see Attention).
 
 ### Model / architecture
@@ -185,17 +193,17 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   padding. Different bin counts can wait until a real example needs them.
 - **Inference targets may omit truth.** It is valid to pass target tokens with dummy
   `value` / `value_index` for prediction-only calls. `.log_prob(target)` is only called
-  when target truth is present; demos/train code are responsible for that distinction.
+  when target truth is present; example/train code are responsible for that distinction.
 - **Loss weighting stays minimal.** Start with `data_weight` and `latent_weight` scalars,
   then average per active target token. No benchmark-derived formulas or per-task grids.
 - **Device movement lives on the data objects.** Add `Tokens.to(device)` and
-  `Batch.to(device)` immediately so `train.py` and `demo.py` do not accumulate tensor
+  `Batch.to(device)` immediately so training scripts do not accumulate tensor
   plumbing.
 
 ### Tighten before coding
 
 - **Implement in dependency order.** Build `ace.py` and the Gaussian toy path first, prove
-  the interface with `demo.py`, then add GP-1D save/load shards. Do not build a generic
+  the interface with `gaussian_toy.py`, then add GP-1D save/load shards. Do not build a generic
   sharded data layer before the model and toy diagnostic work.
 - **Keep `Variable` boring.** The schema should be explicit and local: `name`, `kind`
   (`data` / `latent`), value type (`continuous` / `discrete`), cardinality for discrete
@@ -207,11 +215,13 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 - **Let the Gaussian toy be the first correctness oracle.** It should check that posterior
   moments and autoregressive two-latent predictions are sane before GP-1D adds Cholesky
   and dataset plumbing.
-- **Mine `temp/` selectively.** Reuse ideas, not structure: rectangular attention, CPU
-  float64 GP sampling, and simple train-loop habits are useful; cache provenance, Slurm,
-  prefetch, reeval schemas, and diagnostic suites are explicitly out of scope.
-- **Smoke tests stay loose.** The Gaussian toy oracle should catch broken heads and
-  obviously wrong posterior moments, but it should not become a brittle
+- **Use archived experiments selectively.** If a gitignored `temp/` directory is present,
+  treat it as external experiment code. Reuse ideas only when they fit nanoACE directly:
+  rectangular attention, CPU float64 GP sampling, and simple train-loop habits are useful;
+  cache provenance, Slurm, prefetch, reeval schemas, and large diagnostic suites are out
+  of scope.
+- **Short verification runs stay loose.** The Gaussian toy oracle should catch broken
+  heads and obviously wrong posterior moments, but it should not become a brittle
   strict-quality gate around stochastic training.
 - **Checkpoint artifact deferred.** A tiny toy `state_dict` can ship only after the toy
   trains reliably and the blob is genuinely small. Design the code so retraining is the
@@ -234,11 +244,10 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 - **Shuffle is fixed to "both"** (permute shard order + rows within shards), seeded by
   `(seed, pass)`. No `shuffle_mode` enum — drops the field from any manifest and removes
   one axis from resume checks.
-- **Online generation is not a mode.** Generators (`gaussian_toy`, `gp1d`, …) are pure
-  functions returning a batch. "Online" = call the generator in your loop; it needs no
-  flag and `train.py` stays single-path. The seam is at the function boundary, not in
-  config — which avoids the two-regime tax (cf. the GP project's online-vs-cached split,
-  resume axis, and "don't aggregate the two regimes" footgun).
+- **Online generation is not a mode.** Generators (`gaussian_toy`, `gp1d`, ...) are pure
+  functions returning a batch. "Online" means calling the generator inside the training
+  loop; it needs no config flag. The boundary is the generator function itself, so
+  `train.py` does not need separate online and cached code paths.
 - **Normalization to ~[-1,1] happens in `data.py` at generation.** The model only ever
   sees normalized values (the embedders/head bias assume this range).
 
@@ -252,53 +261,54 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   reads shards synchronously. **Leave a code comment** explaining this, so the absence
   reads as a decision, not an oversight. (If the GPU ever starves on H2D, add
   pinned-memory + a copy stream as a later, local change.)
-- **Cut entirely (fleet management):** Slurm/HPC layer; finite-pool caching machinery
+- **Cut entirely (large experiment management):** Slurm/HPC layer; finite-pool caching machinery
   beyond the simple sharded save (manifest, DGP-hash fingerprint, shuffle enum);
   multi-axis resume-provenance guards; schema-migration `reeval`; mechanistic
   probes / partial-R² / causal interventions (those served a separate research question).
 
 ### Examples / scope
 
-- **Hero example 1 — Gaussian (μ, σ) toy.** Two latents, fixed latent priors,
-  analytic Bayesian posterior on a grid → self-verifying. Runs online and remains small;
-  longer local runs can save a checkpoint/plot for inspection.
-  - **A shipped pretrained model is likely** — so `demo.py` can run without a training
-    wait, and as a regression anchor — but *how* we distribute it is deferred (not
-    fossilizing). See Open questions.
-- **Hero example 2 — GP-1D regression.** Lengthscale/outputscale as continuous latents,
+- **Example 1: Gaussian (`mu`, `sigma`) toy.** Two latents, fixed latent priors, analytic
+  Bayesian posterior on a grid, and a matching posterior predictive diagnostic. Runs
+  online and remains small; longer local runs can save a checkpoint/plot for inspection.
+  - **An optional pretrained checkpoint is useful** because it would make `gaussian_toy.py`
+    instant and provide a stable regression anchor. Distribution is deferred until the
+    trained artifact is small and worth keeping. See Open questions.
+- **Example 2: GP-1D regression.** Lengthscale/outputscale as continuous latents,
   **plus kernel selection as a discrete latent** (this is what exercises the discrete
-  path so it isn't dead code). Use a **deliberately diverse kernel set** (RBF, Matérn,
-  periodic, …) so the sampled functions look genuinely different and classification is
-  meaningful. Uses the generate→save→pool path (data-gen is Cholesky-bound).
+  path so it isn't dead code). Use a **deliberately diverse kernel set** (RBF, Matern,
+  periodic, ...) so the sampled functions look genuinely different and classification is
+  meaningful. Uses the generate/save/pool path (data generation is Cholesky-bound).
 - **"Add a third task" is the canonical user/agent extension** — nano ships exactly two.
   Generality lives in the *architecture* (free: attention over a token stream), not in
   the *example surface*.
 
 ### Layout
 
-- `ace.py`   — config → embedder → block → forward → heads → loss   (THE file)
-- `data.py`  — generators + save/load (sharded)
-- `train.py` — loop + resume
-- `demo.py`  — Gaussian-toy hero + posterior diagnostic
-- Dependencies: **torch only** in the core; matplotlib only in `demo.py`. Match the local
-  working stack from the GP experiments unless there is a specific reason to change it:
+- `ace.py`         — config → embedder → block → forward → heads → loss   (THE file)
+- `diagnostics.py` — reusable grid-query helpers for marginal/AR diagnostics
+- `gaussian_toy.py` — executable Gaussian toy: generator, training, oracle, eval, checkpoint, plot
+- `data.py`        — generators + save/load (sharded; future GP path)
+- `train.py`       — loop + resume (future GP path)
+- Dependencies: **torch only** in the core; plotting imports are isolated to `gaussian_toy.py`.
+  Match the pinned workstation-tested stack unless there is a specific reason to change it:
   `torch==2.11.0+cu128` via `https://download.pytorch.org/whl/cu128` on the RTX 4060
   Laptop GPU. Single dataclass config, no config framework.
 
 ### Open questions
 
 - **Correctness oracle as an automated test?** The Gaussian toy's analytic grid posterior
-  is kept as a first-class *diagnostic* (the demo computes/shows predicted-vs-true
+  is kept as a first-class *diagnostic* (`gaussian_toy.py` computes/shows predicted-vs-true
   moments). Whether it also becomes an automated check is undecided — leaning at most a
-  *loose smoke-test* (catch catastrophic breakage), not a strict R²-threshold quality
+  loose check that catches catastrophic breakage, not a strict R²-threshold quality
   gate (brittle against stochastic training).
 - **Online gen as a one-flag option** — resolved: not a flag; it's the generator-as-
   function (see Data layer).
-- **How to distribute a pretrained model** (deferred — decide once there's a real
-  trained model). Options on the table: a tiny toy checkpoint committed in-repo (keeps
-  the demo instant + offline; sub-MB, no Git LFS, plain `state_dict`); a larger model
+- **How to distribute optional checkpoints** (deferred — decide once there is a real
+  trained artifact). Options on the table: a tiny toy checkpoint committed in-repo (keeps
+  the Gaussian example instant + offline; sub-MB, no Git LFS, plain `state_dict`); a larger model
   hosted on HF and lazy-downloaded (natural home for the multi-MB GP model); or both
-  (two-tier). Principles to preserve whatever we pick: core stays **torch-only** (any
+  (two-tier). Principles to preserve for any option: core stays **torch-only** (any
   HF fetch is an optional extra, never required to read/run/train); the model ships
   config + seed so it's regenerable, not a mystery binary; and it's an *example
   artifact*, not the packaged "runtime product" non-goal.

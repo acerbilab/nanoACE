@@ -1,3 +1,11 @@
+"""Core ACE model and token representation.
+
+Defines `Variable`, `Tokens`, and `Batch`; embeds context and target tokens;
+runs the separated context/self-attention and target/cross-attention blocks;
+returns shared continuous/discrete predictive distributions; and provides the
+autoregressive sampling helper.
+"""
+
 from __future__ import annotations
 
 import math
