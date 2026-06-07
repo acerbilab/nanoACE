@@ -6,8 +6,10 @@ conditions on one token set and predicts distributions over another.
 
 **Read [DEVLOG.md](DEVLOG.md) before any architectural or scope change.** It records the
 design decisions and their rationale, and it is the source of truth for what is in scope.
-[README.md](README.md) covers setup and the public-facing summary. The paper this is based
-on is in [paper/](paper/) as markdown.
+[README.md](README.md) covers setup and the public-facing summary. Historical
+implementation plans live in [docs/plans/](docs/plans/); use them for rationale and
+checklists, but if a plan conflicts with the code or DEVLOG, the code and DEVLOG win.
+The paper this is based on is in [paper/](paper/) as markdown.
 
 ## Commands
 

@@ -87,6 +87,13 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+## Examples
+
+Each example is a standalone script: it trains online, prints fixed diagnostic
+summaries, and usually writes an artifact plot/checkpoint when requested.
+
+### Gaussian ACEP
+
 Run the Gaussian example:
 
 ```powershell
@@ -146,6 +153,8 @@ Save and reuse a small Gaussian checkpoint:
 .\.venv\Scripts\python.exe gaussian_toy.py --eval-only --load-checkpoint artifacts/gaussian_toy.pt
 ```
 
+### GP-1D
+
 Run the GP-1D example:
 
 ```powershell
@@ -180,6 +189,8 @@ Reuse a saved GP-1D checkpoint and regenerate the oracle comparison plot:
 ```powershell
 .\.venv\Scripts\python.exe gp1d.py --eval-only --load-checkpoint artifacts\gp1d.pt --plot-path artifacts\gp1d.png
 ```
+
+### SIR SBI
 
 Run the SIR SBI example:
 
@@ -223,6 +234,8 @@ Reuse a saved SIR checkpoint and regenerate the prior-contrast plot:
 ```powershell
 .\.venv\Scripts\python.exe sbi_sir.py --eval-only --load-checkpoint artifacts\sbi_sir.pt --plot-path artifacts\sbi_sir.png
 ```
+
+### BO-1D
 
 Run the BO-1D example:
 
