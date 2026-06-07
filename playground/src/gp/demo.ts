@@ -67,11 +67,12 @@ export async function mountGP(el: HTMLElement): Promise<void> {
 
   // --- state ---
   const points: Point[] = [
-    { x: -0.8, y: 0.5 },
-    { x: -0.45, y: -0.4 },
-    { x: -0.1, y: 0.6 },
-    { x: 0.3, y: -0.5 },
-    { x: 0.7, y: 0.4 },
+    { x: -0.9, y: -0.4 },
+    { x: -0.55, y: 0.15 },
+    { x: -0.2, y: 0.55 },
+    { x: 0.15, y: 0.5 },
+    { x: 0.5, y: 0.05 },
+    { x: 0.85, y: -0.5 },
   ];
   const pin: PinState = { kernel: null, ell: false, scale: false };
   let ellVal = 0.5 * (ellMeta.bound_lo + ellMeta.bound_hi);
