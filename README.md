@@ -33,6 +33,9 @@ Implemented modules:
 - [ace.py](ace.py): core `Variable`, `Tokens`, `Batch`, bounded-latent
   coordinate helpers, ACE transformer, shared continuous MDN head, shared masked
   categorical head, prediction object, loss, and autoregressive sampling helper.
+- [ace_prior.py](ace_prior.py): shared ACEP runtime-prior helpers that build and
+  score the two-feature `(mean, spread)` Beta information tokens, reused by the
+  prior-conditioning examples.
 - [gaussian_toy.py](gaussian_toy.py): Gaussian ACEP toy with two bounded
   continuous latents, runtime Beta information tokens, online
   training/evaluation CLI, analytic grid posterior, posterior predictive,
@@ -40,6 +43,11 @@ Implemented modules:
 - [gp1d.py](gp1d.py): GP-1D regression example with continuous kernel
   hyperparameter latents, discrete kernel selection, online CPU float64 GP
   sampling, numerical grid posterior oracle, and a fixed diagnostic plot.
+- [sbi_sir.py](sbi_sir.py): SIR simulation-based-inference example with two
+  continuous rate latents (`beta`, `gamma`), online deterministic-ODE simulation
+  with Gaussian observation noise, runtime Beta prior injection, a numerical
+  `(beta, gamma)` grid posterior oracle, and a fixed diagnostic that contrasts a
+  uniform against an informative runtime prior.
 - [diagnostics.py](diagnostics.py): reusable grid-query helpers for marginal and
   two-variable AR diagnostics.
 - [playground/](playground/): a **non-core**, fully in-browser TypeScript demo
@@ -51,8 +59,10 @@ Implemented modules:
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Next work: resolve playground weight hosting for Pages, then inspect the retained
-GP-1D checkpoint's kernel calibration before adding more examples.
+Next work: resolve playground weight hosting for Pages; inspect the retained GP-1D
+checkpoint's kernel calibration; tune the SIR diagnostic and model size against its
+grid oracle; and consider whether the shared prior path warrants a discrete-latent
+runtime prior.
 
 ## Setup
 
@@ -162,6 +172,49 @@ Reuse a saved GP-1D checkpoint and regenerate the oracle comparison plot:
 
 ```powershell
 .\.venv\Scripts\python.exe gp1d.py --eval-only --load-checkpoint artifacts\gp1d.pt --plot-path artifacts\gp1d.png
+```
+
+Run the SIR SBI example:
+
+```powershell
+.\.venv\Scripts\python.exe sbi_sir.py
+```
+
+The SIR example is the simulation-based-inference task: recover the contact rate
+`beta` and recovery rate `gamma` of an epidemic from a noisily observed infected
+fraction over time. Functions are simulated online from the deterministic SIR
+ODE (RK4 in fraction coordinates) plus Gaussian observation noise. Training
+samples runtime Beta priors over `beta` and `gamma`, draws the true rates from
+those priors, and always emits one prior token per rate (ACEP); `Beta(1, 1)` is
+the uninformative case. Because the trajectory is deterministic given the rates,
+the diagnostic computes an exact-up-to-grid `(beta, gamma)` posterior by scoring
+every grid point's Gaussian observation likelihood times the Beta prior, and a
+posterior-predictive epidemic curve as the mixture of deterministic trajectories
+over that posterior grid. ACE itself only ever sees simulated draws, never the
+likelihood.
+
+The fixed diagnostic uses sparse, rise-phase observations on purpose: early
+epidemic data pins down the growth rate but leaves a broad `beta`/`gamma` ridge,
+so the runtime prior visibly tightens and shifts the posterior. The plot shows
+the same observation under a uniform and an informative prior side by side, plus
+the forecast epidemic curve.
+
+Common artifact names used by the SIR example:
+
+- `artifacts/sbi_sir.pt`
+- `artifacts/sbi_sir.png`
+
+For a short SIR run, or to force CPU:
+
+```powershell
+.\.venv\Scripts\python.exe sbi_sir.py --steps 20 --batch-size 16
+.\.venv\Scripts\python.exe sbi_sir.py --device cpu --steps 20 --batch-size 16
+```
+
+Reuse a saved SIR checkpoint and regenerate the prior-contrast plot:
+
+```powershell
+.\.venv\Scripts\python.exe sbi_sir.py --eval-only --load-checkpoint artifacts\sbi_sir.pt --plot-path artifacts\sbi_sir.png
 ```
 
 ## Design Notes
