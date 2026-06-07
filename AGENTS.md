@@ -115,6 +115,10 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   SIR emit finite-spread Beta information tokens (ACEP); GP-1D emits no finite-spread
   priors, only zero-spread tokens when a continuous latent is revealed. The shared Beta
   prior-token helpers live in `ace_prior.py`.
+- **Latent reveal uses uniform non-empty subsets.** `sample_reveal_mask` in `ace.py`
+  chooses no reveal with probability `q`; otherwise it samples a uniform non-empty
+  subset of the task latents. Gaussian and GP-1D are both trained under this multi-reveal
+  DGP, so exact multi-pin conditioning in the playground is in-distribution.
 - **Data values remain task-scaled.** Data values should generally be scaled around
   `[-1, 1]` at generation time. This is a soft convention, not clipping: Gaussian and
   GP samples can have stochastic tails outside that range, which may matter when reading
@@ -134,3 +138,9 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   optimization example (optimum latents + runtime prior injection, no oracle), and
   `diagnostics.py` for grid queries. `data.py` / `train.py` are planned in DEVLOG "Layout"
   but not yet built.
+- **`playground/` is a non-core example, not part of the core.** It is a Vite + TypeScript
+  in-browser demo that reimplements `ace.py`'s forward pass in TS (parity-tested against
+  the PyTorch model) so trained checkpoints run client-side. The core stays torch-only and
+  legible; do not let the JS toolchain or web concerns bleed into `ace.py` or the examples.
+  Treat it like `temp/` in spirit (separate, optional), but unlike `temp/` it *is* checked
+  in and maintained. See `playground/README.md` and the DEVLOG "Web playground" entry.

@@ -56,12 +56,19 @@ Implemented modules:
   and a wrong runtime prior. This is the one example with no oracle.
 - [diagnostics.py](diagnostics.py): reusable grid-query helpers for marginal and
   two-variable AR diagnostics.
+- [playground/](playground/): a **non-core**, fully in-browser TypeScript demo
+  (separate toolchain) where trained models run client-side — GP-1D and Gaussian,
+  with interactive conditioning, latent pinning, and an analytic oracle overlay.
+  See [playground/README.md](playground/README.md). The Python core stays
+  torch-only; the playground is an example built on a parity-tested TS port of
+  `ace.py`'s forward pass.
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Next work: tune the SIR diagnostic and model size against its grid oracle, tune
-the BO diagnostic/model size, and consider whether the shared prior path warrants
-a discrete-latent runtime prior.
+Next work: resolve playground weight hosting for Pages; inspect the retained GP-1D
+checkpoint's kernel calibration; tune the SIR diagnostic and model size against its
+grid oracle; tune the BO diagnostic/model size; and consider whether the shared
+prior path warrants a discrete-latent runtime prior.
 
 ## Setup
 
@@ -97,10 +104,9 @@ same checkpoint regenerates the same plotted case.
 The plot also compares the posterior predictive density for a new `y`; the
 analytic predictive is computed by marginalizing over the posterior grid, not by
 plugging posterior moments into a Gaussian.
-Training sometimes reveals one latent as a zero-spread information token and
-asks for the other, so the autoregressive diagnostic is trained on the
-conditional latent queries it uses at evaluation time. The fixed diagnostic
-uses `EVAL_MU_PRIOR = (0.70, 20.0)` and
+Training sometimes reveals a random subset of latents as zero-spread information
+tokens and queries the rest, so exact multi-latent conditioning is now
+in-distribution. The fixed diagnostic uses `EVAL_MU_PRIOR = (0.70, 20.0)` and
 `EVAL_LOGSIG_PRIOR = (0.70, 8.0)` in unit-mean/concentration coordinates.
 
 Useful Gaussian controls:

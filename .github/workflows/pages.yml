@@ -1,0 +1,64 @@
+name: Deploy playground to GitHub Pages
+
+# Manual-only for now (no auto-deploy on push). Run from the Actions tab.
+# Prerequisite: Settings -> Pages -> Build and deployment -> Source = GitHub Actions.
+#
+# PENDING: weight blobs (playground/public/models/) are gitignored while the
+# hosting decision is parked. The build job fails fast unless those files are
+# present, so a manual dispatch cannot publish a weightless demo by accident.
+# Resolve the hosting decision first (commit blobs / Git LFS / runtime fetch);
+# the checkpoints aren't in the repo, so generating weights in CI is not
+# currently possible.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: playground
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: playground/package-lock.json
+      - run: npm ci
+      - name: Require generated model weights
+        run: |
+          for file in \
+            public/models/gp1d/manifest.json \
+            public/models/gp1d/weights.bin \
+            public/models/gaussian/manifest.json \
+            public/models/gaussian/weights.bin
+          do
+            if [ ! -f "$file" ]; then
+              echo "::error::Missing $file. Resolve playground weight hosting before deploying Pages."
+              exit 1
+            fi
+          done
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: playground/dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

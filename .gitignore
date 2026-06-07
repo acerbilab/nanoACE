@@ -3,6 +3,14 @@ temp/
 __pycache__/
 artifacts/
 *.py[cod]
+node_modules/
+
+# playground (non-core TS demo): ignore build output, deps, and generated weights
+# (weight-hosting decision parked; blobs are regenerated via export_weights.py)
+playground/node_modules/
+playground/dist/
+playground/.vite/
+playground/public/models/
 
 # editor / OS cruft
 .vscode/

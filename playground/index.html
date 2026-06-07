@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nanoACE playground</title>
+    <style>
+      :root {
+        --fg: #1c1c1e;
+        --muted: #6b7280;
+        --line: #e3e3e8;
+        --accent: #2563eb;
+        --ace: #2563eb;
+        --oracle: #16a34a;
+        --warn: #b45309;
+        --warn-bg: #fff7ed;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        color: var(--fg);
+        background: #fafafa;
+      }
+      header {
+        padding: 18px 22px 0;
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+      header h1 { margin: 0 0 2px; font-size: 20px; }
+      header p { margin: 0; color: var(--muted); }
+      header a { color: var(--accent); }
+      .tabs {
+        display: flex;
+        gap: 6px;
+        max-width: 1080px;
+        margin: 16px auto 0;
+        padding: 0 22px;
+        border-bottom: 1px solid var(--line);
+      }
+      .tab {
+        appearance: none;
+        border: 1px solid transparent;
+        border-bottom: none;
+        background: none;
+        padding: 8px 14px;
+        font: inherit;
+        color: var(--muted);
+        cursor: pointer;
+        border-radius: 8px 8px 0 0;
+      }
+      .tab.active {
+        color: var(--fg);
+        background: #fff;
+        border-color: var(--line);
+        margin-bottom: -1px;
+      }
+      main { max-width: 1080px; margin: 0 auto; padding: 20px 22px 60px; }
+      .panel { display: none; }
+      .panel.active { display: block; }
+      .loading { color: var(--muted); padding: 40px 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>nanoACE playground</h1>
+      <p>
+        Interactive amortized conditioning — the model runs entirely in your browser.
+        See <a href="https://github.com/lacerbi/nanoACE">nanoACE</a>.
+      </p>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="gp">GP-1D regression</button>
+      <button class="tab" data-tab="gaussian">Gaussian (μ, σ) with priors</button>
+    </nav>
+
+    <main>
+      <section id="gp" class="panel active">
+        <div class="loading">Loading GP-1D model…</div>
+      </section>
+      <section id="gaussian" class="panel">
+        <div class="loading">Loading Gaussian model…</div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

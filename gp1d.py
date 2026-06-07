@@ -16,7 +16,7 @@ from pathlib import Path
 
 import torch
 
-from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value
+from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value, sample_reveal_mask
 from diagnostics import normalized_moments, query_log_density, repeat_tokens
 
 
@@ -215,11 +215,14 @@ def sample_gp_batch(
 
     n_ctx = torch.randint(min_context, max_context + 1, (batch_size,), device=device)
     ar = torch.arange(max_context, device=device)[None, :]
-    reveal = torch.rand(batch_size, device=device) < latent_context_prob
-    reveal_which = torch.randint(0, 3, (batch_size,), device=device)
-    reveal_ell = reveal & (reveal_which == 0)
-    reveal_scale = reveal & (reveal_which == 1)
-    reveal_kernel = reveal & (reveal_which == 2)
+    # Reveal a uniform random non-empty subset of the three latents with prob
+    # latent_context_prob, else reveal none. Revealed latents are exact context
+    # tokens (continuous -> zero-spread PRIOR, kernel -> VALUE label); the rest
+    # are queried. See DEVLOG "multi-latent reveal".
+    reveal_mask = sample_reveal_mask(3, batch_size, q=1.0 - latent_context_prob, device=device)
+    reveal_ell = reveal_mask[:, 0]
+    reveal_scale = reveal_mask[:, 1]
+    reveal_kernel = reveal_mask[:, 2]
 
     ctx_t = max_context + 3
     ell_pos, scale_pos, kernel_pos = max_context, max_context + 1, max_context + 2
@@ -676,7 +679,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--components", type=int, default=8)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--latent-weight", type=float, default=2.0)
-    p.add_argument("--latent-context-prob", type=float, default=0.20)
+    p.add_argument("--latent-context-prob", type=float, default=0.5,
+                   help="P(reveal any latents) per task; revealed = uniform random non-empty subset")
     p.add_argument("--jitter", type=float, default=1e-5)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--plot-path", default="artifacts/gp1d.png")

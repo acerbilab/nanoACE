@@ -126,6 +126,98 @@ the revised plan (see PLAN-bo1d.md "Review notes").
 
 ---
 
+## 2026-06-07 — Web playground (in-browser TS port)
+
+- **A non-core interactive demo lives in `playground/`.** It is an *example*, not
+  part of nanoACE: the core stays torch-only and legible, while `playground/`
+  carries a Vite + TypeScript toolchain. It reimplements `ace.py`'s forward pass
+  in TS so trained models run fully client-side (GitHub Pages, no server). Two
+  demos: GP-1D (add/drag points, infer the kernel, **pin a latent and predict**)
+  and Gaussian (Beta-prior sliders + observed `y`, with the analytic oracle
+  overlaid). The headline is that amortized conditioning is instant — a forward
+  pass per interaction — which is exactly what an interactive demo makes visible.
+- **The port is a frozen snapshot kept honest by a parity test.** `export_weights.py`
+  derives every constant from a live `ACE` instance (no hand re-encoding of the
+  schema) and writes plain float16 arrays + a JSON manifest — readable weights,
+  not a mystery binary, regenerable from a checkpoint. Weights are float16 to halve
+  the blobs (~3.6 MB total); parameters are rounded with `.half().float()` in
+  *both* the exporter and `parity.py`, so the shipped weights and the references
+  reflect identical values (only float32-vs-float64 arithmetic differs). `parity.py` dumps the real
+  model's embeddings, per-layer states, raw head outputs, and derived quantities
+  on deterministic cases covering every token path; `npm test` asserts the TS
+  forward reproduces them (and that each demo's orchestration matches `gp1d.py` /
+  `gaussian_toy.py`). PyTorch-float32 vs JS-float64 means the gate is a combined
+  relative+absolute tolerance, not bit-parity. If `ace.py`'s forward changes, the
+  parity test fails loudly and localizes the drift; re-port and regenerate.
+- **Gotcha — fixtures + blob can go collectively stale vs the checkpoint.** Both
+  `export_weights.py` and `parity.py` derive from the checkpoint loaded at run time,
+  and the parity test compares the TS forward only against those fixtures — *not*
+  against the current checkpoint. So if the checkpoint is retrained but the blob and
+  fixtures aren't regenerated together, the demo silently loads the old model while
+  `npm test` stays green. (This happened 2026-06-07: a GP retrain at 12:52 — after a
+  12:49 export — left the demo predicting a flat mean from a stale blob; the fix was
+  to re-run export + parity.) **Always re-run `export_weights.py` and `parity.py`
+  together after retraining**; a Python sanity assert on the freshly exported model
+  (e.g. it tracks a smooth function) would catch this class of bug.
+- **Weight hosting is an open decision; blobs are not committed (parked).** The
+  exported fp16 blobs (`playground/public/models/`) are gitignored for now.
+  Options: commit them (~3.6 MB today, but binary churn grows with retrains and
+  more examples), Git LFS (keeps `.git` lean, still same-origin), or runtime fetch
+  from an external host such as HF (adds a CORS + browser-caching dependency and
+  risks the fetched weights drifting out of sync with the parity-pinned code, the
+  one integrity property this design leans on). Regenerate locally via
+  `export_weights.py` meanwhile. The Pages deploy is blocked until this resolves.
+- **Multi-latent reveal (DONE 2026-06-07) — playground multi-pin is now in-distribution.**
+  Previously both samplers revealed *at most one* latent as context per example, so
+  pinning two or three latents in the playground was out-of-distribution. The DGP
+  below was implemented and both examples retrained (Gaussian 30k, GP 100k), so
+  multi-pin is now a real conditional and the ≥2-pin OOD banner has been removed.
+  - **Why:** the playground's headline interaction is "pin latents and predict";
+    multi-pin should be a real conditional, not OOD.
+  - **Resolved DGP — the reveal/conditioning distribution (decided 2026-06-07).**
+    The task generators are otherwise unchanged (latent priors/ranges, kernels,
+    function sampling); only how each task chooses revealed-vs-queried latents changes.
+    - **Reveal mask (shared helper, both examples).** Per task: with prob `q` reveal
+      *nothing*; otherwise reveal a **uniform random non-empty subset** of the latents.
+      Implement once, e.g. `sample_reveal_mask(n_latents, batch, q, device) -> bool[B, L]`:
+      `reveal_any ~ Bernoulli(1-q)`; if revealing, sample one integer bitmask uniformly
+      from `1..2^L-1` and decode it to latent booleans, else all-False. Default
+      `q ≈ 0.5`, tunable per example — keeps the headline 0-reveal case at ~half the
+      mass while the rest covers every multi-pin combination.
+    - **Mental model.** Every latent's prior token has a spread running from informative
+      (Beta) → zero (exact). The reveal mask picks *which latents have zero spread (exact)*.
+    - **GP (`gp1d.sample_gp_batch`) — exact-only, stays finite-prior-free.** Drop
+      `reveal_which` (the `randint(0,3)` single pick); use the shared mask. A *revealed*
+      latent enters context as a zero-spread token (continuous → zero-spread `PRIOR`,
+      `kernel` → `VALUE` class label) and is dropped from the target; a *non-revealed*
+      latent has **no** prior token and is queried. The kernel may be revealed together
+      with continuous latents.
+    - **Gaussian (`gaussian_toy.sample_toy_batch`) — keep the always-present Beta priors.**
+      Both latents always carry a runtime Beta prior token (the latent is drawn from it),
+      exactly as today — that is the ACEP demo and is already in-distribution. Replace
+      `reveal_mu` xor `reveal_logsig` with the shared mask: a *revealed* latent collapses
+      its Beta slot to a zero-spread exact token and leaves the target; a *non-revealed*
+      latent keeps its finite Beta prior and is queried. (The current Beta-slider demo
+      needs no retrain; this mainly makes exact multi-"pin" in-distribution and unifies
+      the two samplers under one helper.)
+  - **Follow-up completed after retraining:** re-ran `playground/export_weights.py`
+    for the affected task(s), regenerated fixtures with `playground/parity.py`
+    (they pin the *current* checkpoint — see the fixtures+blob staleness gotcha
+    above), and removed the ≥2-pin OOD trigger in the playground.
+  - **Status (2026-06-07): DONE.** `sample_reveal_mask` in `ace.py`, wired into
+    `sample_gp_batch` / `sample_toy_batch`, default `--latent-context-prob` (P(reveal
+    any)) = 0.5. Both examples retrained under the new DGP (Gaussian 30k, GP 100k),
+    blobs re-exported and fixtures regenerated, and the playground ≥2-pin OOD trigger
+    removed (`PIN_OOD_MIN` deleted from `config.ts`; pin branch dropped from
+    `oodReasons`). Diagnostics still track the oracle (Gaussian μ/log σ ≈ oracle; GP
+    predictive RMSE 0.36 vs oracle 0.345). Note GP is a bit *overconfident* on kernel
+    identity (Periodic 0.81 vs oracle 0.50) — acceptable for the demo, worth a glance
+    if kernel calibration matters later. GP pins-only contexts with no observed data
+    remain flagged OOD in the playground because training used at least four data
+    context points.
+
+---
+
 ## 2026-06-07 — SIR simulation-based-inference example + `ace_prior.py`
 
 - **Third example: `sbi_sir.py`.** This is the SBI task from the paper's third
@@ -174,6 +266,17 @@ the revised plan (see PLAN-bo1d.md "Review notes").
 - **Deferred.** No discrete-latent runtime prior token (still deferred from the prior
   redesign). The SIR AR two-latent joint heatmap is computed-capable but not plotted, to
   keep the uniform-vs-informative contrast legible; the marginals carry the story.
+- **TODO — migrate SIR to the shared multi-reveal DGP (`sample_reveal_mask`).** `sbi_sir.py`
+  predates the multi-latent reveal work (it landed on a branch that split before it), so its
+  sampler still uses the old single-reveal logic: with prob `latent_context_prob` it reveals
+  *exactly one* of `beta`/`gamma` (`reveal_beta` xor `reveal_gamma`), never both. It runs fine
+  as-is and the current diagnostic doesn't pin latents, so nothing is broken. But it means a
+  two-pin SIR context (both `beta` and `gamma` revealed) is out-of-distribution, unlike Gaussian
+  and GP-1D. Follow-up for consistency: replace the xor with `sample_reveal_mask(2, batch, q=1
+  - latent_context_prob, device)` (the same swap done in `sample_toy_batch` / `sample_gp_batch`),
+  then retrain the SIR checkpoint so exact multi-pin conditioning is in-distribution and all
+  three examples share one reveal helper. Not required until SIR grows an interactive/pinning
+  demo.
 
 ---
 
@@ -355,12 +458,12 @@ example.
   posterior mass near 0.002 in this case, so that movement is not practically relevant.
   This is a one-case numerical check, not a benchmark harness.
 - **Current retained GP artifact.** The retained `artifacts/gp1d.pt` / `artifacts/gp1d.png`
-  pair is a 100k-step online run. The fixed diagnostic now uses a periodic generating
+  pair is a post-Beta-token-schema 100k-step online run. The fixed diagnostic uses a periodic generating
   kernel. The numerical oracle still leaves real uncertainty: posterior mass is roughly
   RBF 0.002, Matern-1/2 0.377, Matern-3/2 0.121, periodic 0.500. The checkpoint gives
-  roughly RBF 0.013, Matern-1/2 0.295, Matern-3/2 0.223, periodic 0.469. The
-  oracle-vs-ACE kernel KL is about 0.05; oracle predictive RMSE is about 0.35 and ACE
-  predictive RMSE is about 0.40. Treat the plot as an oracle-calibrated ambiguous
+  roughly RBF 0.007, Matern-1/2 0.152, Matern-3/2 0.083, periodic 0.759. The
+  oracle-vs-ACE kernel KL is about 0.18; oracle predictive RMSE is about 0.35 and ACE
+  predictive RMSE is about 0.39. Treat the plot as an oracle-calibrated ambiguous
   posterior, not as a hard truth-recovery example.
 
 ---

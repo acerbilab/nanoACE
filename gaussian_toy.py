@@ -15,7 +15,7 @@ from pathlib import Path
 
 import torch
 
-from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Variable, encode_value
+from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Variable, encode_value, sample_reveal_mask
 from ace_prior import beta_logprior_on_grid, draw_from_beta, known_latent_features, prior_features, sample_prior_params
 from diagnostics import ar_joint_log_density, make_scalar_tokens, normalized_moments, query_log_density
 
@@ -92,13 +92,13 @@ def sample_toy_batch(
     y = mu[:, None] + sigma[:, None] * torch.randn(batch_size, total_y, device=device)
     n_ctx = torch.randint(min_context, max_context + 1, (batch_size,), device=device)
     ar = torch.arange(max_context, device=device)[None, :]
-    if latent_context_prob > 0.0:
-        reveal = torch.rand(batch_size, device=device) < latent_context_prob
-        reveal_mu = reveal & (torch.rand(batch_size, device=device) < 0.5)
-        reveal_logsig = reveal & ~reveal_mu
-    else:
-        reveal_mu = torch.zeros(batch_size, device=device, dtype=torch.bool)
-        reveal_logsig = torch.zeros(batch_size, device=device, dtype=torch.bool)
+    # Reveal a uniform random non-empty subset of {mu, log_sigma} with prob
+    # latent_context_prob, else reveal none. A revealed latent collapses its
+    # always-present Beta prior token to a zero-spread exact value; a non-revealed
+    # latent keeps its Beta prior and is queried. See DEVLOG "multi-latent reveal".
+    reveal_mask = sample_reveal_mask(2, batch_size, q=1.0 - latent_context_prob, device=device)
+    reveal_mu = reveal_mask[:, 0]
+    reveal_logsig = reveal_mask[:, 1]
 
     ctx_t = max_context + 2
     mu_value_pos = max_context
@@ -521,7 +521,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--components", type=int, default=8)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--latent-weight", type=float, default=2.0)
-    p.add_argument("--latent-context-prob", type=float, default=0.25)
+    p.add_argument("--latent-context-prob", type=float, default=0.5,
+                   help="P(reveal any latents) per task; revealed = uniform random non-empty subset")
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--plot-path", default="artifacts/gaussian_toy.png")
     p.add_argument("--no-plot", action="store_true")
