@@ -48,13 +48,20 @@ Implemented modules:
   with Gaussian observation noise, runtime Beta prior injection, a numerical
   `(beta, gamma)` grid posterior oracle, and a fixed diagnostic that contrasts a
   uniform against an informative runtime prior.
+- [bo1d.py](bo1d.py): 1D Bayesian optimization example with the global optimum's
+  location `x_opt` and value `y_opt` as latents (properties of the specific
+  sampled function), an optimum-planting GP data-generating process, runtime Beta
+  prior injection over the optimum location with an epsilon-contamination
+  ("robust prior") floor, and a fixed diagnostic contrasting a uniform, a correct,
+  and a wrong runtime prior. This is the one example with no oracle.
 - [diagnostics.py](diagnostics.py): reusable grid-query helpers for marginal and
   two-variable AR diagnostics.
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Next work: tune the SIR diagnostic and model size against its grid oracle, and
-consider whether the shared prior path warrants a discrete-latent runtime prior.
+Next work: tune the SIR diagnostic and model size against its grid oracle, tune
+the BO diagnostic/model size, and consider whether the shared prior path warrants
+a discrete-latent runtime prior.
 
 ## Setup
 
@@ -208,6 +215,54 @@ Reuse a saved SIR checkpoint and regenerate the prior-contrast plot:
 
 ```powershell
 .\.venv\Scripts\python.exe sbi_sir.py --eval-only --load-checkpoint artifacts\sbi_sir.pt --plot-path artifacts\sbi_sir.png
+```
+
+Run the BO-1D example:
+
+```powershell
+.\.venv\Scripts\python.exe bo1d.py
+```
+
+The BO example is the Bayesian-optimization task: recover the location `x_opt`
+and value `y_opt` of the global minimum of a black-box 1D function from a few
+samples, and optionally inject a runtime Beta prior over the optimum location
+(the paper's prior-injection BO). Unlike the GP example, whose latents describe
+the function *class*, here the latents are properties of the *specific* sampled
+function -- exactly the quantities BO normally needs bespoke acquisition machinery
+to reason about. Functions are generated online by a planting data-generating
+process: sample GP hyperparameters (nuisance, not predicted), draw `x_opt`/`y_opt`
+from epsilon-contaminated Beta priors, sample a GP draw conditioned on the optimum
+geometry, then fold and add a convex envelope so the chosen optimum is the exact,
+unique global minimum. There is **no oracle** (the fold destroys Gaussianity, and
+the other three examples already carry grid oracles); the fixed diagnostic instead
+plots the true function and true optimum as the reference.
+
+The headline is **robust prior injection**. The effective prior is
+`(1 - eps) * Beta + eps * Uniform`, so a confidently *wrong* user prior cannot
+starve the true optimum of probability mass. The fixed diagnostic shows the same
+observation under three runtime priors side by side: uniform, a correct
+informative prior (which tightens the `x_opt` posterior toward truth), and a wrong
+informative prior (which the data overrides). Each column also shows the `y_opt`
+marginal and the conditional `p(x_opt | y_opt, D)` (the Thompson-sampling query).
+
+Common artifact names used by the BO example:
+
+- `artifacts/bo1d.pt`
+- `artifacts/bo1d.png`
+
+Check only the data-generating-process scale (no training), run a short BO run,
+or force CPU:
+
+```powershell
+.\.venv\Scripts\python.exe bo1d.py --scale-check
+.\.venv\Scripts\python.exe bo1d.py --steps 20 --batch-size 16
+.\.venv\Scripts\python.exe bo1d.py --device cpu --steps 20 --batch-size 16
+```
+
+Reuse a saved BO checkpoint and regenerate the prior-contrast plot:
+
+```powershell
+.\.venv\Scripts\python.exe bo1d.py --eval-only --load-checkpoint artifacts\bo1d.pt --plot-path artifacts\bo1d.png
 ```
 
 ## Design Notes

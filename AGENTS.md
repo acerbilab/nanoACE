@@ -28,15 +28,24 @@ python -m venv .venv
 # a uniform vs an informative runtime prior)
 .\.venv\Scripts\python.exe sbi_sir.py
 
+# run the 1D Bayesian optimization example (trains, then prints x_opt/y_opt
+# posteriors under a uniform, a correct, and a wrong runtime prior; no oracle)
+.\.venv\Scripts\python.exe bo1d.py
+
 # short run that verifies the script starts and completes
 .\.venv\Scripts\python.exe gaussian_toy.py --steps 20 --batch-size 32
 .\.venv\Scripts\python.exe gp1d.py --steps 20 --batch-size 16
 .\.venv\Scripts\python.exe sbi_sir.py --steps 20 --batch-size 16
+.\.venv\Scripts\python.exe bo1d.py --steps 20 --batch-size 16
+
+# verify only the BO data-generating process scale (no training)
+.\.venv\Scripts\python.exe bo1d.py --scale-check
 
 # force CPU
 .\.venv\Scripts\python.exe gaussian_toy.py --device cpu --steps 20
 .\.venv\Scripts\python.exe gp1d.py --device cpu --steps 20 --batch-size 16
 .\.venv\Scripts\python.exe sbi_sir.py --device cpu --steps 20 --batch-size 16
+.\.venv\Scripts\python.exe bo1d.py --device cpu --steps 20 --batch-size 16
 ```
 
 There is no separate test suite, linter, or build step. **Verification = run `gaussian_toy.py` and
@@ -50,13 +59,20 @@ analytic posterior. For `sbi_sir.py`, verification is a short run plus the fixed
 diagnostic: a numerical `(beta, gamma)` grid oracle (deterministic ODE + Gaussian
 observation likelihood), shown for a uniform and an informative runtime prior so the
 prior conditioning is visible; treat it as exact up to grid resolution, the bounded rate
-ranges, and the RK4/interpolation step.
+ranges, and the RK4/interpolation step. For `bo1d.py`, there is **no oracle** (the `|.|`
+fold in the optimum-planting DGP destroys Gaussianity, and the other three examples
+already carry grid oracles): verification is `--scale-check` (data token values sit
+in `[-1, 1]`) plus the fixed three-prior diagnostic, read structurally -- the `x_opt`
+posterior should tighten/shift toward truth from the uniform to the correct prior, and
+the wrong prior should be *resisted* (posterior stays near the data, not the wrong prior)
+thanks to the epsilon-contaminated prior. The true function and true `(x_opt, y_opt)` are
+plotted as the reference.
 
 ## Architecture (the cross-file picture)
 
 Everything routes through one idea: **variables as tokens**. The model is in
-`ace.py`; `gaussian_toy.py`, `gp1d.py`, and `sbi_sir.py` are the current executable task
-examples built on top of it.
+`ace.py`; `gaussian_toy.py`, `gp1d.py`, `sbi_sir.py`, and `bo1d.py` are the current
+executable task examples built on top of it.
 
 - **Data model (`ace.py`).** `Variable` is the static schema (name, `kind` data/latent,
   continuous/discrete + `cardinality`, `transform`, optional bounded continuous-latent
@@ -111,7 +127,10 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   experiment-management machinery such as Slurm scripts, cache provenance, prefetch
   systems, and resume matrices should not be copied into this repository.
 - **Currently implemented:** `ace.py` for the model, `ace_prior.py` for the shared ACEP
-  Beta prior-token helpers, `gaussian_toy.py` for the executable Gaussian example and
-  analytic oracle, `gp1d.py` for the executable GP regression example, `sbi_sir.py` for
-  the executable SIR simulation-based-inference example, and `diagnostics.py` for grid
-  queries. `data.py` / `train.py` are planned in DEVLOG "Layout" but not yet built.
+  Beta prior-token helpers (including `sample_contaminated` for robust priors),
+  `gaussian_toy.py` for the executable Gaussian example and analytic oracle, `gp1d.py` for
+  the executable GP regression example, `sbi_sir.py` for the executable SIR
+  simulation-based-inference example, `bo1d.py` for the executable 1D Bayesian
+  optimization example (optimum latents + runtime prior injection, no oracle), and
+  `diagnostics.py` for grid queries. `data.py` / `train.py` are planned in DEVLOG "Layout"
+  but not yet built.
