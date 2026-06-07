@@ -9,6 +9,57 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-07 — SIR simulation-based-inference example + `ace_prior.py`
+
+- **Third example: `sbi_sir.py`.** This is the SBI task from the paper's third
+  application area: infer the contact rate `beta` and recovery rate `gamma` of an
+  epidemic from a noisily observed infected fraction over time. It is deliberately a
+  *fusion* of the two existing examples, not new architecture — runtime Beta prior
+  injection (ACEP) from `gaussian_toy.py` plus online time-series simulation, 1D
+  time-indexed data tokens, and a grid oracle from `gp1d.py`. The only genuinely new
+  machinery is a small batched RK4 integrator.
+- **Simulator: deterministic SIR ODE + Gaussian observation noise.** Chosen over the
+  paper's Binomial/Poisson counts because the deterministic-trajectory-given-`(beta,
+  gamma)` property makes the marginal likelihood a product of Gaussian observation
+  densities, so the `(beta, gamma)` grid posterior is tractable — the same recipe as
+  `gp_oracle`. ACE only ever sees simulator draws, never the likelihood, so it is
+  honestly simulation-based; the grid oracle is the reference. Gaussian observation
+  noise also matches the continuous MDN head exactly (no continuous-vs-discrete
+  predictive caveat).
+- **Continuous-only latents.** `beta`, `gamma` are bounded continuous latents with
+  identity transform, so the uniform generative prior is exactly `Beta(1, 1)`, matching
+  `gaussian_toy.py`. No discrete latent — `gp1d.py` already exercises that path, and a
+  discrete latent here would be redundant and complicate the oracle.
+- **Data scaling is explicit.** The infected fraction is small (~0–0.4) while the
+  embedders assume values near `[-1, 1]`, so the example applies a fixed affine
+  `scale_value`/`unscale_value` (and `scale_time`) at the token boundary. The oracle
+  works entirely in native fraction space; ACE predictive moments are decoded before
+  comparison. `"y"` is a data variable, so the core `encode_value`/`decode_value` (which
+  only touch bounded latents) do not apply — the affine is local to this example. This is
+  the "scaling happens at generation" convention made explicit for a small-valued series.
+- **Diagnostic: uniform-vs-informative prior contrast.** The headline SBI feature is
+  prior conditioning, so the fixed case is evaluated twice on the *same* observation —
+  once with `Beta(1, 1)` and once with an informative Beta — and both posteriors are
+  plotted. To make the prior matter, the fixed context is sparse rise-phase data: early
+  epidemic observations identify the growth rate but leave a broad, near-degenerate
+  `beta`/`gamma` ridge (oracle corr ≈ 0.99), so the informative prior visibly tightens
+  the marginals (β std ≈ 0.080 → 0.050, γ ≈ 0.057 → 0.035) and pulls them toward truth.
+  With many clean observations the likelihood dominates and the contrast vanishes; that
+  is the correct behavior, just not an interesting demo.
+- **Shared prior helpers extracted to `ace_prior.py`.** The Beta prior-token helpers
+  (`sample_prior_params`, `beta_alpha_beta`, `prior_features`, `known_latent_features`,
+  `draw_from_beta`, `beta_logprior_on_grid`) were a pure move out of `gaussian_toy.py`;
+  both prior-conditioning examples now import them. The `(mean, spread)` prior token is a
+  core ACEP representation, so a shared module is the right home. Audit: the model-side
+  prior code (`PRIOR_FEATURES`, `spread_embed`, the `_embed` payload) and the general
+  `encode_value`/`decode_value` coordinate maps stay in `ace.py`; `ace_prior.py` imports
+  `PRIOR_FEATURES` from the core and asserts the two-feature layout.
+- **Deferred.** No discrete-latent runtime prior token (still deferred from the prior
+  redesign). The SIR AR two-latent joint heatmap is computed-capable but not plotted, to
+  keep the uniform-vs-informative contrast legible; the marginals carry the story.
+
+---
+
 ## 2026-06-07 — Bounded latent coordinates and Beta information tokens
 
 - **Bounded continuous latents are tokenized to `[-1, 1]`.** `Variable.bounds`

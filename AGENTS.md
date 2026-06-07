@@ -24,13 +24,19 @@ python -m venv .venv
 # run the GP-1D example (trains, then prints oracle-vs-model GP diagnostics)
 .\.venv\Scripts\python.exe gp1d.py
 
+# run the SIR SBI example (trains, then prints oracle-vs-model posteriors under
+# a uniform vs an informative runtime prior)
+.\.venv\Scripts\python.exe sbi_sir.py
+
 # short run that verifies the script starts and completes
 .\.venv\Scripts\python.exe gaussian_toy.py --steps 20 --batch-size 32
 .\.venv\Scripts\python.exe gp1d.py --steps 20 --batch-size 16
+.\.venv\Scripts\python.exe sbi_sir.py --steps 20 --batch-size 16
 
 # force CPU
 .\.venv\Scripts\python.exe gaussian_toy.py --device cpu --steps 20
 .\.venv\Scripts\python.exe gp1d.py --device cpu --steps 20 --batch-size 16
+.\.venv\Scripts\python.exe sbi_sir.py --device cpu --steps 20 --batch-size 16
 ```
 
 There is no separate test suite, linter, or build step. **Verification = run `gaussian_toy.py` and
@@ -40,13 +46,17 @@ a strict quality gate (see DEVLOG "Open questions"). For `gp1d.py`, verification
 short run plus visual inspection of the fixed diagnostic plot. The GP diagnostic has a
 numerical grid oracle over kernel and hyperparameters; treat it as exact up to grid
 resolution, bounded hyperparameter ranges, and Cholesky jitter, not as a closed-form
-analytic posterior.
+analytic posterior. For `sbi_sir.py`, verification is a short run plus the fixed
+diagnostic: a numerical `(beta, gamma)` grid oracle (deterministic ODE + Gaussian
+observation likelihood), shown for a uniform and an informative runtime prior so the
+prior conditioning is visible; treat it as exact up to grid resolution, the bounded rate
+ranges, and the RK4/interpolation step.
 
 ## Architecture (the cross-file picture)
 
 Everything routes through one idea: **variables as tokens**. The model is in
-`ace.py`; `gaussian_toy.py` and `gp1d.py` are the current executable task examples built
-on top of it.
+`ace.py`; `gaussian_toy.py`, `gp1d.py`, and `sbi_sir.py` are the current executable task
+examples built on top of it.
 
 - **Data model (`ace.py`).** `Variable` is the static schema (name, `kind` data/latent,
   continuous/discrete + `cardinality`, `transform`, optional bounded continuous-latent
@@ -85,9 +95,10 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   printing, and plotting, and use `encode_value` / `decode_value` at token boundaries.
 - **`Tokens.prior` has two features.** For bounded continuous latent `PRIOR` tokens,
   `prior[..., 0]` is the internal-coordinate mean/location and `prior[..., 1]` is
-  internal-coordinate spread. Spread zero is an exact known latent value. Gaussian emits
-  finite-spread Beta information tokens; GP-1D emits no finite-spread priors, only
-  zero-spread tokens when a continuous latent is revealed.
+  internal-coordinate spread. Spread zero is an exact known latent value. Gaussian and
+  SIR emit finite-spread Beta information tokens (ACEP); GP-1D emits no finite-spread
+  priors, only zero-spread tokens when a continuous latent is revealed. The shared Beta
+  prior-token helpers live in `ace_prior.py`.
 - **Data values remain task-scaled.** Data values should generally be scaled around
   `[-1, 1]` at generation time. This is a soft convention, not clipping: Gaussian and
   GP samples can have stochastic tails outside that range, which may matter when reading
@@ -99,7 +110,8 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   it as archived external experiment code. It may contain useful ideas, but large
   experiment-management machinery such as Slurm scripts, cache provenance, prefetch
   systems, and resume matrices should not be copied into this repository.
-- **Currently implemented:** `ace.py` for the model, `gaussian_toy.py` for the executable
-  Gaussian example and analytic oracle, `gp1d.py` for the executable GP regression
-  example, and `diagnostics.py` for grid queries. `data.py` / `train.py` are planned in
-  DEVLOG "Layout" but not yet built.
+- **Currently implemented:** `ace.py` for the model, `ace_prior.py` for the shared ACEP
+  Beta prior-token helpers, `gaussian_toy.py` for the executable Gaussian example and
+  analytic oracle, `gp1d.py` for the executable GP regression example, `sbi_sir.py` for
+  the executable SIR simulation-based-inference example, and `diagnostics.py` for grid
+  queries. `data.py` / `train.py` are planned in DEVLOG "Layout" but not yet built.
