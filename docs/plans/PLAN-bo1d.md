@@ -6,7 +6,7 @@ Status: COMPLETE (historical implementation plan; quality checkpoint is a GPU-tr
 
 ## Status
 
-Implemented: `ace_prior.sample_contaminated`; `bo1d.py` (schema, DGP, training,
+Implemented: `ace_prior_beta.sample_contaminated`; `bo1d.py` (schema, DGP, training,
 fixed three-prior diagnostic, plot, checkpoint helpers, `--scale-check`). Docs in
 `README.md` and `AGENTS.md`. Default network: `d_model=192`, **6 transformer
 blocks**, 16 heads, mlp 384, `K=12` (~3.9M params); default contamination
@@ -77,7 +77,7 @@ paper is inspiration, not a constraint (see DEVLOG).
 - **In scope**:
   - `bo1d.py`: schema, online DGP, training loop, fixed diagnostic, checkpoint
     helpers, plot.
-  - `sample_contaminated` helper in `ace_prior.py` (genuinely shared); the
+  - `sample_contaminated` helper in `ace_prior_beta.py` (genuinely shared); the
     plot-only `mixture_logprior_on_grid` stays local to `bo1d.py` until a second
     consumer exists.
   - Three-column prior diagnostic (uniform / correct-informative /
@@ -191,7 +191,7 @@ prior. ε is a fixed hyperparameter (default `0.05`), exposed as
 `--prior-uniform-mix`. Applied to **both** latents.
 
 **Why it is needed, and why it is not redundant with `sample_prior_params`.**
-`ace_prior.sample_prior_params` already mixes uniform/broad/concentrated Betas,
+`ace_prior_beta.sample_prior_params` already mixes uniform/broad/concentrated Betas,
 but it always draws truth from the *same* Beta that the token encodes -- the token
 never lies. A model trained on that alone learns to trust a concentrated token
 essentially fully, so the **wrong-informative-prior diagnostic column would
@@ -218,7 +218,7 @@ token): a per-sample ε that the model cannot observe would be marginalized into
 average response, which is a broader hyperprior, not robust-Bayes, and would not
 support the wrong-prior column.
 
-New helper `ace_prior.sample_contaminated(mu_unit, nu, lo, hi, eps)` -> native
+New helper `ace_prior_beta.sample_contaminated(mu_unit, nu, lo, hi, eps)` -> native
 draw from the mixture. Plot-only `mixture_logprior_on_grid` lives in `bo1d.py`
 (single consumer); restrict its grid to `[lo, hi]` so the uniform term integrates
 correctly.
@@ -319,7 +319,7 @@ envelope constant, kernel weights, and the `|d|` cap are frozen module constants
 
 1. Schema + `make_tokens` + scaling constants; **scale check** + contamination
    marginal check on a sampled batch.
-2. `sample_contaminated` in `ace_prior.py`.
+2. `sample_contaminated` in `ace_prior_beta.py`.
 3. DGP (`sample_bo_batch`): hyperparameters, contaminated latent draws + `d`
    clamp/cap, Matheron GP draw + optimum conditioning, fold/envelope/level, obs
    noise, permutation split, tokenization, gaussian/sir reveal.

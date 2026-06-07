@@ -33,9 +33,10 @@ Implemented modules:
 - [ace.py](ace.py): core `Variable`, `Tokens`, `Batch`, bounded-latent
   coordinate helpers, ACE transformer, shared continuous MDN head, shared masked
   categorical head, prediction object, loss, and autoregressive sampling helper.
-- [ace_prior.py](ace_prior.py): shared ACEP runtime-prior helpers that build and
-  score the two-feature `(mean, spread)` Beta information tokens, reused by the
-  prior-conditioning examples.
+- [ace_prior_beta.py](ace_prior_beta.py): Beta-specific ACEP runtime-prior
+  helpers that build and score the two-feature `(mean, spread)` information
+  tokens used by the prior-conditioning examples. Model-side PRIOR token
+  semantics live in [ace.py](ace.py).
 - [gaussian_toy.py](gaussian_toy.py): Gaussian ACEP toy with two bounded
   continuous latents, runtime Beta information tokens, online
   training/evaluation CLI, analytic grid posterior, posterior predictive,

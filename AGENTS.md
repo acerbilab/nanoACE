@@ -115,8 +115,9 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   `prior[..., 0]` is the internal-coordinate mean/location and `prior[..., 1]` is
   internal-coordinate spread. Spread zero is an exact known latent value. Gaussian and
   SIR emit finite-spread Beta information tokens (ACEP); GP-1D emits no finite-spread
-  priors, only zero-spread tokens when a continuous latent is revealed. The shared Beta
-  prior-token helpers live in `ace_prior.py`.
+  priors, only zero-spread tokens when a continuous latent is revealed. The shared
+  Beta prior-token helpers live in `ace_prior_beta.py`; model-side PRIOR token
+  semantics live in `ace.py`.
 - **Latent reveal uses a shared mixture DGP.** `sample_reveal_mask` in `ace.py` picks no
   reveal with probability `q`; otherwise it splits 50/50 between a uniform non-empty subset
   and a uniform count (`k` in `1..L`) then a uniform size-`k` subset. All four examples
@@ -136,8 +137,9 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   it as archived external experiment code. It may contain useful ideas, but large
   experiment-management machinery such as Slurm scripts, cache provenance, prefetch
   systems, and resume matrices should not be copied into this repository.
-- **Currently implemented:** `ace.py` for the model, `ace_prior.py` for the shared ACEP
-  Beta prior-token helpers (including `sample_contaminated` for robust priors),
+- **Currently implemented:** `ace.py` for the model, `ace_prior_beta.py` for the
+  shared Beta-specific ACEP prior-token helpers (including `sample_contaminated`
+  for robust priors),
   `gaussian_toy.py` for the executable Gaussian example and analytic oracle, `gp1d.py` for
   the executable GP regression example, `sbi_sir.py` for the executable SIR
   simulation-based-inference example, `bo1d.py` for the executable 1D Bayesian

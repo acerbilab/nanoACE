@@ -1,24 +1,32 @@
 """Executable SIR simulation-based-inference example for nanoACE.
 
-This is the simulation-based inference (SBI) example: recover the contact rate
-`beta` and recovery rate `gamma` of an epidemic from a noisily observed infected
-fraction over time. It is a fusion of the two existing examples:
+Problem: infer the contact rate `beta` and recovery rate `gamma` of a
+deterministic SIR epidemic from noisy observations of the infected fraction over
+time. Both rates are bounded continuous latents. Every batch includes one Beta
+information token per rate; `Beta(1, 1)` is the uninformative runtime prior, and
+revealed rates are represented as zero-spread exact PRIOR tokens.
 
-- runtime **Beta prior injection (ACEP)** like `gaussian_toy.py` -- one PRIOR
-  token is always emitted per continuous latent (`Beta(1, 1)` = uniform when
-  uninformative);
-- **online time-series simulation, 1D-indexed (time) data tokens, and a grid
-  oracle** like `gp1d.py`.
+The simulator integrates the SIR ODE in fraction coordinates and adds Gaussian
+observation noise. Because the trajectory is deterministic given `(beta,
+gamma)`, the diagnostic can compute a numerical grid posterior by scoring the
+Gaussian observation likelihood times the runtime prior. The fixed diagnostic
+uses the same sparse rise-phase observation under a uniform and an informative
+prior, so prior conditioning is visible.
 
-The simulator is the deterministic SIR ODE with Gaussian observation noise.
-Because the trajectory is deterministic given `(beta, gamma)`, the marginal
-likelihood is a product of Gaussian observation densities, so the `(beta,
-gamma)` grid posterior is tractable -- the same recipe as `gp1d.py::gp_oracle`.
-ACE itself only ever sees simulator draws, never the likelihood. The diagnostic
-contrasts a uniform prior against an informative prior on the same observation
-to show runtime prior conditioning at work.
+ODE integration and the grid oracle use CPU float64. ACE training and prediction
+run on the selected device.
 
-ODE integration uses CPU float64; ACE itself runs on the selected device.
+File layout:
+1. constants and small dataclasses;
+2. `variables()` schema, token constructor, and scaling helpers;
+3. SIR integrator, simulator, and ACE batch construction;
+4. numerical `(beta, gamma)` grid oracle and prior-contrast diagnostic;
+5. model construction, training, checkpoint helpers;
+6. fixed evaluation, printed metrics, and plot;
+7. CLI entry point.
+
+Task-specific generation and diagnostics live here; reusable ACE machinery
+stays in `ace.py`, `ace_prior_beta.py`, and `diagnostics.py`.
 """
 
 from __future__ import annotations
@@ -31,7 +39,7 @@ from pathlib import Path
 import torch
 
 from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value, sample_reveal_mask
-from ace_prior import beta_logprior_on_grid, draw_from_beta, known_latent_features, prior_features, sample_prior_params
+from ace_prior_beta import beta_logprior_on_grid, draw_from_beta, known_latent_features, prior_features, sample_prior_params
 from diagnostics import normalized_moments, query_log_density
 
 

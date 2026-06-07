@@ -1,10 +1,28 @@
-"""Executable 1D Gaussian-process example for nanoACE.
+"""Executable 1D Gaussian-process regression example for nanoACE.
 
-This file defines one compact GP regression task with three latents:
-`log_lengthscale`, `log_outputscale`, and a discrete kernel family. It owns the
-online sampler, training loop, fixed diagnostic case, checkpoint helpers, and
-plot. GP sampling uses CPU float64 Cholesky; ACE itself runs on the selected
-device.
+Problem: infer a sampled function's GP kernel family, log lengthscale, and log
+output scale from irregular 1D observations, while also predicting function
+values at target locations. The continuous hyperparameter latents are bounded
+and encoded to ACE token coordinates; the kernel latent is discrete. Revealed
+continuous latents are zero-spread PRIOR tokens, and a revealed kernel is a
+VALUE class-label token. This example does not use finite-spread runtime priors.
+
+GP function sampling and the diagnostic oracle use CPU float64 Cholesky. ACE
+training and prediction run on the selected device. The fixed diagnostic
+numerically integrates over kernel and hyperparameter grids and mixes GP
+posterior predictives under those weights.
+
+File layout:
+1. constants and small dataclasses;
+2. `variables()` schema and token constructor;
+3. GP kernels, sampler, and ACE batch construction;
+4. numerical grid oracle over kernel and hyperparameters;
+5. model construction, training, checkpoint helpers;
+6. fixed evaluation, printed metrics, and plot;
+7. CLI entry point.
+
+Task-specific generation and diagnostics live here; reusable ACE machinery
+stays in `ace.py` and `diagnostics.py`.
 """
 
 from __future__ import annotations

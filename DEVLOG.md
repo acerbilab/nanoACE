@@ -139,7 +139,7 @@ the revised plan (see `docs/plans/PLAN-bo1d.md` "Review notes").
   ε-contamination's job is to **decouple truth from the token** a fraction ε of the
   time, the one thing `sample_prior_params` cannot do. So `bo1d` reuses
   `sample_prior_params` for the token and applies contamination *only at the
-  truth-draw* (new `ace_prior.sample_contaminated`). It lives entirely in the DGP
+  truth-draw* (new `ace_prior_beta.sample_contaminated`). It lives entirely in the DGP
   truth-draw and plot overlays, not in the token or model (a single Beta token
   cannot represent a mixture, and need not). Corrected framing: the model does not
   learn "a global discount knob" -- the contaminated prior is the true generative
@@ -262,7 +262,7 @@ the revised plan (see `docs/plans/PLAN-bo1d.md` "Review notes").
 
 ---
 
-## 2026-06-07 — SIR simulation-based-inference example + `ace_prior.py`
+## 2026-06-07 — SIR simulation-based-inference example + `ace_prior_beta.py`
 
 - **Third example: `sbi_sir.py`.** This is the SBI task from the paper's third
   application area: infer the contact rate `beta` and recovery rate `gamma` of an
@@ -299,14 +299,15 @@ the revised plan (see `docs/plans/PLAN-bo1d.md` "Review notes").
   the marginals (β std ≈ 0.080 → 0.050, γ ≈ 0.057 → 0.035) and pulls them toward truth.
   With many clean observations the likelihood dominates and the contrast vanishes; that
   is the correct behavior, just not an interesting demo.
-- **Shared prior helpers extracted to `ace_prior.py`.** The Beta prior-token helpers
+- **Shared prior helpers extracted to `ace_prior_beta.py`.** The Beta prior-token helpers
   (`sample_prior_params`, `beta_alpha_beta`, `prior_features`, `known_latent_features`,
   `draw_from_beta`, `beta_logprior_on_grid`) were a pure move out of `gaussian_toy.py`;
   both prior-conditioning examples now import them. The `(mean, spread)` prior token is a
   core ACEP representation, so a shared module is the right home. Audit: the model-side
   prior code (`PRIOR_FEATURES`, `spread_embed`, the `_embed` payload) and the general
-  `encode_value`/`decode_value` coordinate maps stay in `ace.py`; `ace_prior.py` imports
-  `PRIOR_FEATURES` from the core and asserts the two-feature layout.
+  `encode_value`/`decode_value` coordinate maps stay in `ace.py`; `ace_prior_beta.py`
+  imports `PRIOR_FEATURES` from the core and asserts the two-feature layout. The
+  helper module is Beta-specific; model-side PRIOR token semantics stay in `ace.py`.
 - **Deferred.** No discrete-latent runtime prior token (still deferred from the prior
   redesign). The SIR AR two-latent joint heatmap is computed-capable but not plotted, to
   keep the uniform-vs-informative contrast legible; the marginals carry the story.

@@ -1,9 +1,27 @@
-"""Executable Gaussian toy example for nanoACE.
+"""Executable Gaussian ACEP toy for nanoACE.
 
-Defines the runtime-Beta-prior `(mu, log_sigma)` problem, online batch
-generation, training loop, deterministic evaluation batch, analytic grid
-posterior, posterior predictive density, checkpoint helpers, and diagnostic
-plot.
+Problem: infer the mean `mu` and log standard deviation `log_sigma` of a 1D
+Gaussian from observed scalar samples. Both latents are bounded continuous
+variables. Every batch includes one Beta information token per latent; unrevealed
+latents are queried, while revealed latents replace their finite-spread prior
+with a zero-spread exact PRIOR token.
+
+The diagnostic uses a fixed observation set and an analytic grid posterior over
+`(mu, log_sigma)`. It compares ACE latent marginals, a symmetrized
+autoregressive joint density, and the posterior predictive for a new `y` against
+that oracle.
+
+File layout:
+1. constants and small dataclasses;
+2. `variables()` schema;
+3. online sampler that builds ACE context/target tokens;
+4. analytic Gaussian posterior, predictive, and grid-query diagnostics;
+5. model construction, training, checkpoint helpers;
+6. fixed evaluation batch, printed metrics, and plot;
+7. CLI entry point.
+
+Task-specific generation and diagnostics live here; reusable ACE machinery
+stays in `ace.py`, `ace_prior_beta.py`, and `diagnostics.py`.
 """
 
 from __future__ import annotations
@@ -16,7 +34,7 @@ from pathlib import Path
 import torch
 
 from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Variable, encode_value, sample_reveal_mask
-from ace_prior import beta_logprior_on_grid, draw_from_beta, known_latent_features, prior_features, sample_prior_params
+from ace_prior_beta import beta_logprior_on_grid, draw_from_beta, known_latent_features, prior_features, sample_prior_params
 from diagnostics import ar_joint_log_density, make_scalar_tokens, normalized_moments, query_log_density
 
 

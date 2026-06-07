@@ -1,32 +1,40 @@
 """Executable 1D Bayesian optimization example for nanoACE.
 
-This is the Bayesian optimization (BO) example: recover the *location* `x_opt`
-and *value* `y_opt` of the global minimum of a black-box function from a few
-samples, and accept a runtime Beta prior over the optimum location (the paper's
-prior-injection BO, ACEP-TS). It is a mix of the existing examples:
+Problem: infer the location `x_opt` and value `y_opt` of a black-box function's
+global minimum from a few noisy observations. These latents are properties of
+the specific sampled function, not class-level GP hyperparameters. Every batch
+includes Beta information tokens for the optimum latents; truth is drawn from an
+epsilon-contaminated prior so a concentrated but wrong runtime prior still has a
+uniform probability floor.
 
-- the two latents are properties of the *specific sampled function* (unlike
-  `gp1d.py`, whose kernel/hyperparameters describe the function class);
-- GP function sampling + sampled kernel/hyperparameters come from `gp1d.py`;
-- runtime Beta prior tokens and observation noise come from `gaussian_toy.py` /
-  `sbi_sir.py`; the latent reveal mechanism is the shared `ace.sample_reveal_mask`.
-
-Data-generating process (adapted from Appendix C.3.1, 1D): sample
-kernel/lengthscale/output-scale (nuisance, not predicted); draw `x_opt` and
-`y_opt` from epsilon-contaminated Beta priors; draw a natural optimum depth `d`
-from a min-value distribution; sample a GP draw conditioned on `g(x_opt) = d`
-(Matheron's rule); then plant the optimum with a fold + convex envelope:
+Data-generating process: sample nuisance GP kernel and hyperparameters, draw
+`x_opt` and `y_opt`, draw a natural optimum depth `d`, sample a GP draw
+conditioned on `g(x_opt) = d` by Matheron's rule, then plant the optimum with a
+fold and convex envelope:
 
     f(x) = |g_c(x) - d| + ENVELOPE * (x - x_opt)^2 + y_opt
 
 Both added terms are >= 0 and vanish together only at x = x_opt, and the
 envelope is strictly positive off x_opt, so x_opt is the exact unique global
 minimum with value y_opt. The `|.|` fold gives the kinked, multi-basin geometry
-(and destroys Gaussianity -- hence there is **no grid oracle**; the other three
-examples carry that burden). Observations add small Gaussian noise.
+and destroys Gaussianity, so this example deliberately has no grid oracle.
+Diagnostics instead check token scale and compare ACE under uniform, correct,
+and wrong runtime priors on the same fixed observation.
 
-GP sampling and the optimum conditioning run on CPU float64; ACE runs on the
-selected device.
+GP sampling and optimum planting use CPU float64. ACE training and prediction
+run on the selected device.
+
+File layout:
+1. constants and small dataclasses;
+2. `variables()` schema, token constructor, and scaling/prior helpers;
+3. planted-optimum GP data-generating process and ACE batch construction;
+4. no-oracle diagnostics: scale check plus uniform/correct/wrong prior contrast;
+5. model construction, training, checkpoint helpers;
+6. fixed evaluation, printed metrics, and plot;
+7. CLI entry point.
+
+Task-specific generation and diagnostics live here; reusable ACE machinery
+stays in `ace.py`, `ace_prior_beta.py`, and `diagnostics.py`.
 """
 
 from __future__ import annotations
@@ -39,7 +47,7 @@ from pathlib import Path
 import torch
 
 from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value, sample_reveal_mask
-from ace_prior import (
+from ace_prior_beta import (
     beta_logprior_on_grid,
     known_latent_features,
     prior_features,
@@ -231,7 +239,7 @@ def mixture_logprior_on_grid(
     """Native log density of `(1 - eps) Beta + eps Uniform[lo, hi]` for plotting.
 
     Single consumer (the diagnostic overlay), so it lives here rather than in
-    `ace_prior.py`. The grid must lie within `[lo, hi]`.
+    `ace_prior_beta.py`. The grid must lie within `[lo, hi]`.
     """
 
     beta_logp = beta_logprior_on_grid(grid_native, mu_unit, nu, lo, hi)

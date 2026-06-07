@@ -1,9 +1,15 @@
-"""Core ACE model and token representation.
+"""Core ACE token representation, model, predictions, and sampling helpers.
 
-Defines `Variable`, `Tokens`, and `Batch`; embeds context and target tokens;
-runs the separated context/self-attention and target/cross-attention blocks;
-returns shared continuous/discrete predictive distributions; and provides the
-autoregressive sampling helper.
+ACE treats scalar data variables, latent variables, and runtime information
+about bounded continuous latents as tokens. A `Batch` contains two token sets:
+`context` tokens that the model can condition on and `target` QUERY tokens whose
+values are predicted. Target truth may be stored in the target tokens for loss,
+but the embedder ignores it while `mode == QUERY`.
+
+This file defines the shared schema (`Variable`, `Tokens`, `Batch`), coordinate
+helpers for bounded continuous latents, the separated context self-attention and
+target-to-context cross-attention model, the shared continuous MDN/categorical
+heads, type-dispatched `Predictions`, NLL loss, and autoregressive sampling.
 """
 
 from __future__ import annotations
@@ -20,14 +26,19 @@ import torch.nn.functional as F
 VALUE = 0
 PRIOR = 1
 QUERY = 2
-PRIOR_FEATURES = 2
 """Token modes.
 
 VALUE tokens carry an observed data scalar or class label. PRIOR tokens carry
-two continuous-latent information features `(mean_internal, spread_internal)`.
-For bounded continuous latents, zero spread is an exact known value. QUERY
-tokens ask the model for a predictive distribution; they may still carry truth
-for training, but that truth is not visible to the embedder.
+runtime information about a bounded continuous latent. QUERY tokens ask the
+model for a predictive distribution; they may still carry truth for training,
+but that truth is not visible to the embedder.
+"""
+
+PRIOR_FEATURES = 2
+"""Number of features carried by bounded-continuous-latent PRIOR tokens.
+
+The two features are `(mean_internal, spread_internal)`. Finite spread encodes
+a runtime prior; zero spread encodes an exact known latent value.
 """
 
 

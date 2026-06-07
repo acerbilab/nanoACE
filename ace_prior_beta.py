@@ -1,9 +1,12 @@
-"""Shared ACEP runtime-prior helpers.
+"""Beta-specific ACEP helpers for bounded continuous latent prior tokens.
 
-These build and score the two-feature `(mean_internal, spread_internal)` Beta
-information tokens that ACE conditions on as runtime priors over bounded
-continuous latents. They are reused by every prior-conditioning example
-(`gaussian_toy.py`, `sbi_sir.py`).
+Model-side PRIOR token semantics live in `ace.py`: tokens have a mode, a fixed
+two-feature prior payload, and an embedder path. This module is narrower: it
+implements the Beta-family math used by the current ACEP examples. Finite spread
+encodes a Beta prior over a bounded continuous latent; zero spread encodes an
+exact known latent value. The Gaussian, SIR, and BO examples use these helpers
+to sample prior hyperparameters, draw latent truths, build information tokens,
+and score prior densities on diagnostic grids.
 
 Three coordinate spaces appear here:
 
@@ -24,7 +27,7 @@ import torch
 
 from ace import PRIOR_FEATURES
 
-assert PRIOR_FEATURES == 2, "ace_prior builds two-feature (mean, spread) tokens"
+assert PRIOR_FEATURES == 2, "ace_prior_beta builds two-feature (mean, spread) tokens"
 
 
 def sample_prior_params(shape: tuple[int, ...], *, device: torch.device | str) -> tuple[torch.Tensor, torch.Tensor]:
