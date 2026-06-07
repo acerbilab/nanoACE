@@ -149,6 +149,17 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 - **Deferred.** No discrete-latent runtime prior token (still deferred from the prior
   redesign). The SIR AR two-latent joint heatmap is computed-capable but not plotted, to
   keep the uniform-vs-informative contrast legible; the marginals carry the story.
+- **TODO — migrate SIR to the shared multi-reveal DGP (`sample_reveal_mask`).** `sbi_sir.py`
+  predates the multi-latent reveal work (it landed on a branch that split before it), so its
+  sampler still uses the old single-reveal logic: with prob `latent_context_prob` it reveals
+  *exactly one* of `beta`/`gamma` (`reveal_beta` xor `reveal_gamma`), never both. It runs fine
+  as-is and the current diagnostic doesn't pin latents, so nothing is broken. But it means a
+  two-pin SIR context (both `beta` and `gamma` revealed) is out-of-distribution, unlike Gaussian
+  and GP-1D. Follow-up for consistency: replace the xor with `sample_reveal_mask(2, batch, q=1
+  - latent_context_prob, device)` (the same swap done in `sample_toy_batch` / `sample_gp_batch`),
+  then retrain the SIR checkpoint so exact multi-pin conditioning is in-distribution and all
+  three examples share one reveal helper. Not required until SIR grows an interactive/pinning
+  demo.
 
 ---
 
