@@ -30,12 +30,13 @@ the paper, markdown, and original ACE code:
 
 Implemented modules:
 
-- [ace.py](ace.py): core `Variable`, `Tokens`, `Batch`, ACE transformer, shared
-  continuous MDN head, shared masked categorical head, prediction object, loss,
-  and autoregressive sampling helper.
-- [gaussian_toy.py](gaussian_toy.py): Gaussian toy with two continuous latents, fixed
-  latent priors, online training/evaluation CLI, analytic grid posterior,
-  posterior predictive, checkpoint helpers, and plotting.
+- [ace.py](ace.py): core `Variable`, `Tokens`, `Batch`, bounded-latent
+  coordinate helpers, ACE transformer, shared continuous MDN head, shared masked
+  categorical head, prediction object, loss, and autoregressive sampling helper.
+- [gaussian_toy.py](gaussian_toy.py): Gaussian ACEP toy with two bounded
+  continuous latents, runtime Beta information tokens, online
+  training/evaluation CLI, analytic grid posterior, posterior predictive,
+  checkpoint helpers, and plotting.
 - [gp1d.py](gp1d.py): GP-1D regression example with continuous kernel
   hyperparameter latents, discrete kernel selection, online CPU float64 GP
   sampling, numerical grid posterior oracle, and a fixed diagnostic plot.
@@ -69,8 +70,11 @@ Run the Gaussian example:
 .\.venv\Scripts\python.exe gaussian_toy.py
 ```
 
-The Gaussian example trains online, prints posterior moment diagnostics against
-the analytic oracle, and saves a plot to `artifacts/gaussian_toy.png` by default.
+The Gaussian example trains online with runtime Beta priors over `mu` and
+`log_sigma`, prints posterior moment diagnostics against the matching analytic
+oracle, and saves a plot to `artifacts/gaussian_toy.png` by default. The fixed
+diagnostic plot overlays the runtime prior, oracle posterior, and ACE posterior
+on the latent marginal panels.
 For comparability, evaluation always uses the same deterministic batch: three
 observed `y` values, plus the sampled `mu` and `log_sigma` used only for printed
 diagnostics. The constants live in [gaussian_toy.py](gaussian_toy.py), so rerunning the
@@ -78,9 +82,11 @@ same checkpoint regenerates the same plotted case.
 The plot also compares the posterior predictive density for a new `y`; the
 analytic predictive is computed by marginalizing over the posterior grid, not by
 plugging posterior moments into a Gaussian.
-Training sometimes reveals one latent as a context value and asks for the other,
-so the autoregressive diagnostic is trained on the conditional latent queries it
-uses at evaluation time.
+Training sometimes reveals one latent as a zero-spread information token and
+asks for the other, so the autoregressive diagnostic is trained on the
+conditional latent queries it uses at evaluation time. The fixed diagnostic
+uses `EVAL_MU_PRIOR = (0.70, 20.0)` and
+`EVAL_LOGSIG_PRIOR = (0.70, 8.0)` in unit-mean/concentration coordinates.
 
 Useful Gaussian controls:
 
@@ -165,7 +171,11 @@ point rather than a constraint. The invariants are:
 - the model uses separated context self-attention and target-to-context
   cross-attention.
 
-The internal token representation is intentionally explicit:
+The internal token representation is intentionally explicit. Data values stay in
+task coordinates. Bounded continuous latent values are encoded to internal
+`[-1, 1]` coordinates at token boundaries; native-coordinate prediction helpers
+on `Predictions` decode means/variances/samples and add the affine density
+Jacobian when needed.
 
 ```python
 Batch(
@@ -179,7 +189,7 @@ Tokens(
     x: FloatTensor[B, T, x_dim],
     value: FloatTensor[B, T],
     value_index: LongTensor[B, T],
-    prior: FloatTensor[B, T, n_bins],
+    prior: FloatTensor[B, T, 2],   # bounded latent info: mean, spread
     mode: LongTensor[B, T],   # VALUE | PRIOR | QUERY
     mask: BoolTensor[B, T],
 )

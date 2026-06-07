@@ -16,7 +16,7 @@ from pathlib import Path
 
 import torch
 
-from ace import ACE, ACEConfig, Batch, QUERY, VALUE, Tokens, Variable
+from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value
 from diagnostics import normalized_moments, query_log_density, repeat_tokens
 
 
@@ -73,13 +73,13 @@ class GPOracle:
     y_std: torch.Tensor
 
 
-def variables(n_bins: int) -> list[Variable]:
+def variables() -> list[Variable]:
     """Schema for GP observations and the three task latents."""
 
     return [
         Variable("y", "data", "continuous"),
-        Variable("log_lengthscale", "latent", "continuous", transform="log", prior_range=LOG_LENGTHSCALE_RANGE, prior_bins=n_bins),
-        Variable("log_outputscale", "latent", "continuous", transform="log", prior_range=LOG_OUTPUTSCALE_RANGE, prior_bins=n_bins),
+        Variable("log_lengthscale", "latent", "continuous", transform="log", bounds=LOG_LENGTHSCALE_RANGE),
+        Variable("log_outputscale", "latent", "continuous", transform="log", bounds=LOG_OUTPUTSCALE_RANGE),
         Variable("kernel", "latent", "discrete", cardinality=len(KERNELS)),
     ]
 
@@ -90,9 +90,9 @@ def make_tokens(
     value: torch.Tensor,
     mode: torch.Tensor,
     mask: torch.Tensor,
-    bins: int,
     x: torch.Tensor | None = None,
     value_index: torch.Tensor | None = None,
+    prior: torch.Tensor | None = None,
 ) -> Tokens:
     """Construct GP tokens, keeping data `x` and discrete labels explicit."""
 
@@ -102,12 +102,14 @@ def make_tokens(
         x = torch.zeros(b, t, 1, device=device, dtype=value.dtype)
     if value_index is None:
         value_index = torch.zeros(b, t, device=device, dtype=torch.long)
+    if prior is None:
+        prior = torch.zeros(b, t, PRIOR_FEATURES, device=device, dtype=value.dtype)
     return Tokens(
         var_id=var_id.long(),
         x=x,
         value=value,
         value_index=value_index.long(),
-        prior=torch.zeros(b, t, bins, device=device, dtype=value.dtype),
+        prior=prior,
         mode=mode.long(),
         mask=mask.bool(),
     )
@@ -189,7 +191,6 @@ def sample_gp_batch(
     max_context: int,
     min_context: int,
     data_targets: int,
-    bins: int,
     device: torch.device | str,
     latent_context_prob: float,
     jitter: float,
@@ -208,6 +209,8 @@ def sample_gp_batch(
     y = y_cpu.float().to(device)
     log_ell = log_ell_cpu.float().to(device)
     log_scale = log_scale_cpu.float().to(device)
+    log_ell_internal = encode_value(vars_[1], log_ell)
+    log_scale_internal = encode_value(vars_[2], log_scale)
     kernel = kernel_cpu.to(device)
 
     n_ctx = torch.randint(min_context, max_context + 1, (batch_size,), device=device)
@@ -228,11 +231,17 @@ def sample_gp_batch(
     ctx_x[:, :max_context, 0] = x[:, :max_context]
     ctx_value = torch.zeros(batch_size, ctx_t, device=device)
     ctx_value[:, :max_context] = y[:, :max_context]
-    ctx_value[:, ell_pos] = log_ell
-    ctx_value[:, scale_pos] = log_scale
+    ctx_value[:, ell_pos] = log_ell_internal
+    ctx_value[:, scale_pos] = log_scale_internal
     ctx_value[:, kernel_pos] = kernel.float()
     ctx_index = torch.zeros(batch_size, ctx_t, device=device, dtype=torch.long)
     ctx_index[:, kernel_pos] = kernel
+    ctx_prior = torch.zeros(batch_size, ctx_t, PRIOR_FEATURES, device=device)
+    ctx_prior[:, ell_pos, 0] = log_ell_internal
+    ctx_prior[:, scale_pos, 0] = log_scale_internal
+    ctx_mode = torch.full((batch_size, ctx_t), VALUE, device=device)
+    ctx_mode[:, ell_pos] = PRIOR
+    ctx_mode[:, scale_pos] = PRIOR
     ctx_mask = torch.zeros(batch_size, ctx_t, device=device, dtype=torch.bool)
     ctx_mask[:, :max_context] = ar < n_ctx[:, None]
     ctx_mask[:, ell_pos] = reveal_ell
@@ -243,9 +252,9 @@ def sample_gp_batch(
         x=ctx_x,
         value=ctx_value,
         value_index=ctx_index,
-        mode=torch.full((batch_size, ctx_t), VALUE, device=device),
+        mode=ctx_mode,
         mask=ctx_mask,
-        bins=bins,
+        prior=ctx_prior,
     )
 
     tgt_t = 3 + data_targets
@@ -256,8 +265,8 @@ def sample_gp_batch(
     tgt_x = torch.zeros(batch_size, tgt_t, 1, device=device)
     tgt_x[:, 3:, 0] = x[:, max_context:]
     tgt_value = torch.zeros(batch_size, tgt_t, device=device)
-    tgt_value[:, 0] = log_ell
-    tgt_value[:, 1] = log_scale
+    tgt_value[:, 0] = log_ell_internal
+    tgt_value[:, 1] = log_scale_internal
     tgt_value[:, 2] = kernel.float()
     tgt_value[:, 3:] = y[:, max_context:]
     tgt_index = torch.zeros(batch_size, tgt_t, device=device, dtype=torch.long)
@@ -273,7 +282,6 @@ def sample_gp_batch(
         value_index=tgt_index,
         mode=torch.full((batch_size, tgt_t), QUERY, device=device),
         mask=tgt_mask,
-        bins=bins,
     )
     return GPBatch(Batch(vars_, context, target), x[:, :max_context], y[:, :max_context], x[:, max_context:], y[:, max_context:], log_ell, log_scale, kernel)
 
@@ -283,7 +291,6 @@ def build_model(args, device: torch.device) -> ACE:
 
     cfg = ACEConfig(
         x_dim=1,
-        prior_bins=args.bins,
         d_model=args.d_model,
         n_heads=args.heads,
         n_layers=args.layers,
@@ -291,7 +298,7 @@ def build_model(args, device: torch.device) -> ACE:
         head_hidden=args.hidden,
         mdn_components=args.components,
     )
-    return ACE(variables(args.bins), cfg).to(device)
+    return ACE(variables(), cfg).to(device)
 
 
 def train(args: argparse.Namespace, model: ACE | None = None) -> ACE:
@@ -309,7 +316,6 @@ def train(args: argparse.Namespace, model: ACE | None = None) -> ACE:
             max_context=args.max_context,
             min_context=args.min_context,
             data_targets=args.data_targets,
-            bins=model.cfg.prior_bins,
             device=device,
             latent_context_prob=args.latent_context_prob,
             jitter=args.jitter,
@@ -338,12 +344,12 @@ def load_checkpoint(path: str | Path, device: torch.device) -> ACE:
 
     payload = torch.load(path, map_location=device, weights_only=False)
     cfg = ACEConfig(**payload["cfg"])
-    model = ACE(variables(cfg.prior_bins), cfg).to(device)
+    model = ACE(variables(), cfg).to(device)
     model.load_state_dict(payload["state_dict"])
     return model
 
 
-def fixed_eval_batch(vars_: list[Variable], *, bins: int, device: torch.device | str, points: int, jitter: float) -> GPBatch:
+def fixed_eval_batch(vars_: list[Variable], *, device: torch.device | str, points: int, jitter: float) -> GPBatch:
     """Build the fixed GP function used by the diagnostic plot.
 
     The context locations include nearby pairs and triples. Sparse, evenly
@@ -377,7 +383,6 @@ def fixed_eval_batch(vars_: list[Variable], *, bins: int, device: torch.device |
         value=y_context_d,
         mode=torch.full((1, x_context.shape[1]), VALUE, device=device),
         mask=torch.ones(1, x_context.shape[1], device=device, dtype=torch.bool),
-        bins=bins,
     )
     target = make_tokens(
         var_id=torch.zeros(1, points, device=device, dtype=torch.long),
@@ -385,7 +390,6 @@ def fixed_eval_batch(vars_: list[Variable], *, bins: int, device: torch.device |
         value=y_target_d,
         mode=torch.full((1, points), QUERY, device=device),
         mask=torch.ones(1, points, device=device, dtype=torch.bool),
-        bins=bins,
     )
     return GPBatch(Batch(vars_, context, target), x_context_d, y_context_d, x_target_d, y_target_d, log_ell_d, log_scale_d, kernel_d)
 
@@ -402,7 +406,6 @@ def kernel_posterior(model: ACE, batch: Batch) -> torch.Tensor:
         value_index=labels[:, None],
         mode=torch.full((k, 1), QUERY, device=device),
         mask=torch.ones(k, 1, device=device, dtype=torch.bool),
-        bins=model.cfg.prior_bins,
     )
     rep = Batch(batch.variables, repeat_tokens(batch.context, k), target)
     logp = model(rep).log_prob(target).squeeze(1)
@@ -505,7 +508,7 @@ def evaluate(model: ACE, args: argparse.Namespace) -> Diagnostic:
     """Run the fixed GP diagnostic and print compact metrics."""
 
     device = next(model.parameters()).device
-    toy = fixed_eval_batch(model.variables, bins=model.cfg.prior_bins, device=device, points=args.eval_points, jitter=args.jitter)
+    toy = fixed_eval_batch(model.variables, device=device, points=args.eval_points, jitter=args.jitter)
     oracle = gp_oracle(toy, bins=args.oracle_bins, jitter=args.jitter, chunk=args.oracle_chunk)
     pred = model(toy.batch)
     y_mean = pred.mean(toy.batch.target)[0]
@@ -514,8 +517,10 @@ def evaluate(model: ACE, args: argparse.Namespace) -> Diagnostic:
 
     ell_grid = torch.linspace(LOG_LENGTHSCALE_RANGE[0], LOG_LENGTHSCALE_RANGE[1], args.oracle_bins, device=device)
     scale_grid = torch.linspace(LOG_OUTPUTSCALE_RANGE[0], LOG_OUTPUTSCALE_RANGE[1], args.oracle_bins, device=device)
-    ell_logp = query_log_density(model, toy.batch, 1, ell_grid)
-    scale_logp = query_log_density(model, toy.batch, 2, scale_grid)
+    ell_model_grid = encode_value(model.variables[1], ell_grid)
+    scale_model_grid = encode_value(model.variables[2], scale_grid)
+    ell_logp = query_log_density(model, toy.batch, 1, ell_model_grid)
+    scale_logp = query_log_density(model, toy.batch, 2, scale_model_grid)
     kernel_probs = kernel_posterior(model, toy.batch)
     ell_mean, ell_std = normalized_moments(ell_grid, ell_logp)
     scale_mean, scale_std = normalized_moments(scale_grid, scale_logp)
@@ -658,7 +663,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--bins", type=int, default=64)
     p.add_argument("--max-context", type=int, default=14)
     p.add_argument("--min-context", type=int, default=4)
     p.add_argument("--data-targets", type=int, default=32)

@@ -49,14 +49,15 @@ Everything routes through one idea: **variables as tokens**. The model is in
 on top of it.
 
 - **Data model (`ace.py`).** `Variable` is the static schema (name, `kind` data/latent,
-  continuous/discrete + `cardinality`, `transform`, optional prior grid). `Tokens` is a
+  continuous/discrete + `cardinality`, `transform`, optional bounded continuous-latent
+  `bounds`). `Tokens` is a
   padded, field-parallel struct of `[B, T]` tensors (`var_id, x, value, value_index,
 prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. Device
   movement lives on these objects (`.to`); `cat_tokens` / `Tokens.column` / `with_values`
   are the manipulation primitives.
 - **`mode` drives the embedder.** Each token is `VALUE`, `PRIOR`, or `QUERY` (constants in
   `ace.py`). `ACE._embed` builds `var_embed + mode_embed + x_embed + payload`, where the
-  payload is selected by mode: prior-histogram MLP for `PRIOR`, the learned `unknown`
+  payload is selected by mode: spread-gated continuous-latent information payload for `PRIOR`, the learned `unknown`
   parameter for `QUERY` (so target truth is ignored even when present), else the value
   embedding. Latent tokens zero out `x`. Continuous values go through an MLP; discrete
   values index one shared embedding table via per-variable offsets (`disc_offsets`).
@@ -74,15 +75,20 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   weighted by scalar `data_weight` / `latent_weight` and the target `mask`.
 - **Autoregression is a helper, not architecture.** The base model is a _diagonal_
   prediction map (independent 1-D marginals). `sample_ar` builds joint samples by
-  predicting one target, sampling it, appending it to context as a `VALUE` token, and
-  repeating.
+  predicting one target, sampling it, appending data/discrete samples as `VALUE` tokens
+  and bounded continuous latent samples as zero-spread `PRIOR` tokens, then repeating.
 
 ## Conventions and gotchas
 
-- **One global `prior_bins`.** `ACE.__init__` rejects a `Variable` whose `prior_bins`
-  differs from the config; ragged per-variable prior grids are not implemented in this
-  version.
-- **Priors attach to latents only**, and values should generally be scaled around
+- **Continuous latent coordinates are internal.** Bounded continuous latent token values
+  live in `[-1, 1]`; examples keep native semantic coordinates for sampling, oracles,
+  printing, and plotting, and use `encode_value` / `decode_value` at token boundaries.
+- **`Tokens.prior` has two features.** For bounded continuous latent `PRIOR` tokens,
+  `prior[..., 0]` is the internal-coordinate mean/location and `prior[..., 1]` is
+  internal-coordinate spread. Spread zero is an exact known latent value. Gaussian emits
+  finite-spread Beta information tokens; GP-1D emits no finite-spread priors, only
+  zero-spread tokens when a continuous latent is revealed.
+- **Data values remain task-scaled.** Data values should generally be scaled around
   `[-1, 1]` at generation time. This is a soft convention, not clipping: Gaussian and
   GP samples can have stochastic tails outside that range, which may matter when reading
   predictive calibration.

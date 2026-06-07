@@ -20,12 +20,14 @@ import torch.nn.functional as F
 VALUE = 0
 PRIOR = 1
 QUERY = 2
+PRIOR_FEATURES = 2
 """Token modes.
 
-VALUE tokens carry an observed scalar or class label. PRIOR tokens carry a
-histogram over a latent variable. QUERY tokens ask the model for a predictive
-distribution; they may still carry truth for training, but that truth is not
-visible to the embedder.
+VALUE tokens carry an observed data scalar or class label. PRIOR tokens carry
+two continuous-latent information features `(mean_internal, spread_internal)`.
+For bounded continuous latents, zero spread is an exact known value. QUERY
+tokens ask the model for a predictive distribution; they may still carry truth
+for training, but that truth is not visible to the embedder.
 """
 
 
@@ -36,7 +38,8 @@ class Variable:
     Variables are the schema shared by every batch. `var_id` tensors index into
     this list, so variable identity is available both to the embedder and to the
     prediction object. Continuous values are expected to already live in the
-    transformed space named by `transform`.
+    transformed semantic space named by `transform`; bounded continuous latents
+    are then affine-encoded to `[-1, 1]` at token boundaries.
     """
 
     name: str
@@ -44,8 +47,7 @@ class Variable:
     value_type: str = "continuous"  # "continuous" | "discrete"
     cardinality: int | None = None
     transform: str = "identity"
-    prior_range: tuple[float, float] | None = None
-    prior_bins: int | None = None
+    bounds: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in {"data", "latent"}:
@@ -59,8 +61,64 @@ class Variable:
             raise ValueError("continuous variables should not set cardinality")
         if self.transform not in {"identity", "log", "logit"}:
             raise ValueError(f"bad transform {self.transform!r}")
-        if self.prior_bins is not None and self.prior_bins <= 0:
-            raise ValueError("prior_bins must be positive")
+        if self.bounds is not None:
+            lo, hi = self.bounds
+            if not (math.isfinite(lo) and math.isfinite(hi) and lo < hi):
+                raise ValueError("bounds must be finite and ordered")
+            if self.value_type != "continuous":
+                raise ValueError("bounds are only valid for continuous variables")
+        if self.kind == "latent" and self.value_type == "continuous" and self.bounds is None:
+            raise ValueError("continuous latent variables need finite bounds")
+
+
+def _is_bounded_continuous_latent(variable: Variable) -> bool:
+    return variable.kind == "latent" and variable.value_type == "continuous" and variable.bounds is not None
+
+
+def encode_value(variable: Variable, value: torch.Tensor) -> torch.Tensor:
+    """Encode one variable's native value into ACE token coordinates.
+
+    Only bounded continuous latents are transformed. Data variables and
+    discrete labels are returned unchanged.
+    """
+
+    if not _is_bounded_continuous_latent(variable):
+        return value
+    assert variable.bounds is not None
+    lo = torch.as_tensor(variable.bounds[0], device=value.device, dtype=value.dtype)
+    hi = torch.as_tensor(variable.bounds[1], device=value.device, dtype=value.dtype)
+    return 2.0 * (value - lo) / (hi - lo) - 1.0
+
+
+def decode_value(variable: Variable, value: torch.Tensor) -> torch.Tensor:
+    """Decode one variable's ACE token value back to native coordinates."""
+
+    if not _is_bounded_continuous_latent(variable):
+        return value
+    assert variable.bounds is not None
+    lo = torch.as_tensor(variable.bounds[0], device=value.device, dtype=value.dtype)
+    hi = torch.as_tensor(variable.bounds[1], device=value.device, dtype=value.dtype)
+    return lo + 0.5 * (value + 1.0) * (hi - lo)
+
+
+def encode_token_values(variables: Sequence[Variable], var_id: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+    """Encode a mixed token-shaped value tensor into ACE token coordinates."""
+
+    out = value
+    for idx, variable in enumerate(variables):
+        if _is_bounded_continuous_latent(variable):
+            out = torch.where(var_id == idx, encode_value(variable, value), out)
+    return out
+
+
+def decode_token_values(variables: Sequence[Variable], var_id: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+    """Decode a mixed token-shaped value tensor from ACE token coordinates."""
+
+    out = value
+    for idx, variable in enumerate(variables):
+        if _is_bounded_continuous_latent(variable):
+            out = torch.where(var_id == idx, decode_value(variable, value), out)
+    return out
 
 
 @dataclass
@@ -70,11 +128,17 @@ class Tokens:
     `Tokens` is deliberately just tensors. This keeps examples free to construct
     batches directly while the model sees one uniform representation. Data tokens
     use `x`; latent tokens set `x` to zeros. Continuous variables use `value`;
-    discrete variables use `value_index`; unused fields are dummy zeros.
+    bounded continuous latent values are in internal `[-1, 1]` coordinates.
+    Discrete variables use `value_index`; unused fields are dummy zeros.
 
     Target tokens may carry truth in `value` / `value_index` while still having
     mode QUERY. The embedder ignores truth for QUERY tokens, and
     `Predictions.log_prob` uses it for loss.
+
+    `prior` has shape `[B, T, PRIOR_FEATURES]`. For bounded continuous latent
+    PRIOR tokens, `prior[..., 0]` is the mean/location in internal coordinates
+    and `prior[..., 1]` is the internal-coordinate spread. Spread zero denotes
+    an exact known latent value.
     """
 
     var_id: torch.Tensor
@@ -166,13 +230,12 @@ def cat_tokens(parts: Sequence[Tokens]) -> Tokens:
 class ACEConfig:
     """Small model configuration.
 
-    The first implementation uses one global `prior_bins` and one scalar
-    `x_dim`. That is enough for the Gaussian toy and GP-1D, and avoids ragged
-    prior tensors before an example needs them.
+    The implementation uses one scalar `x_dim` for data covariates. Prior
+    information uses the fixed two-feature representation named by
+    `PRIOR_FEATURES`.
     """
 
     x_dim: int = 1
-    prior_bins: int = 64
     d_model: int = 128
     n_heads: int = 4
     n_layers: int = 4
@@ -264,13 +327,21 @@ class Predictions:
         disc_logits: torch.Tensor,
         *,
         is_discrete: torch.Tensor,
+        is_latent: torch.Tensor,
         cardinality: torch.Tensor,
+        has_bounds: torch.Tensor,
+        bound_lo: torch.Tensor,
+        bound_hi: torch.Tensor,
         min_scale: float,
     ):
         self.cont_raw = cont_raw
         self.disc_logits = disc_logits
         self.is_discrete = is_discrete
+        self.is_latent = is_latent
         self.cardinality = cardinality
+        self.has_bounds = has_bounds
+        self.bound_lo = bound_lo
+        self.bound_hi = bound_hi
         self.min_scale = min_scale
 
     @property
@@ -295,6 +366,40 @@ class Predictions:
         w = log_w.exp()
         mean = (w * loc).sum(dim=-1, keepdim=True)
         return (w * (scale.pow(2) + (loc - mean).pow(2))).sum(dim=-1)
+
+    def _bounded_continuous(self, tokens: Tokens) -> torch.Tensor:
+        return self.is_latent[tokens.var_id] & self.has_bounds[tokens.var_id] & ~self.is_discrete[tokens.var_id]
+
+    def log_prob_native(self, tokens: Tokens) -> torch.Tensor:
+        """Per-token log probability in native coordinates.
+
+        Bounded continuous latent token-space densities are adjusted by the
+        constant affine Jacobian. Data and discrete variables are unchanged.
+        """
+
+        logp = self.log_prob(tokens)
+        bounded = self._bounded_continuous(tokens)
+        width = (self.bound_hi[tokens.var_id] - self.bound_lo[tokens.var_id]).clamp_min(1e-12)
+        jac = torch.log(2.0 / width)
+        return logp + torch.where(bounded, jac, torch.zeros_like(jac))
+
+    def mean_native(self, tokens: Tokens) -> torch.Tensor:
+        """Predictive mean in native coordinates."""
+
+        mean = self.mean(tokens)
+        bounded = self._bounded_continuous(tokens)
+        lo = self.bound_lo[tokens.var_id]
+        hi = self.bound_hi[tokens.var_id]
+        decoded = lo + 0.5 * (mean + 1.0) * (hi - lo)
+        return torch.where(bounded, decoded, mean)
+
+    def continuous_var_native(self, tokens: Tokens) -> torch.Tensor:
+        """Continuous predictive variance in native coordinates."""
+
+        var = self.continuous_var()
+        bounded = self._bounded_continuous(tokens)
+        scale = 0.5 * (self.bound_hi[tokens.var_id] - self.bound_lo[tokens.var_id])
+        return torch.where(bounded, var * scale.pow(2), var)
 
     def _valid_logits(self, tokens: Tokens) -> torch.Tensor:
         """Mask logits outside each discrete variable's local label set.
@@ -368,9 +473,42 @@ class Predictions:
 
         return value, value_index
 
+    def sample_native(self, tokens: Tokens) -> tuple[torch.Tensor, torch.Tensor]:
+        """Sample target values and decode bounded continuous latents."""
+
+        value, value_index = self.sample(tokens)
+        bounded = self._bounded_continuous(tokens)
+        lo = self.bound_lo[tokens.var_id]
+        hi = self.bound_hi[tokens.var_id]
+        decoded = lo + 0.5 * (value + 1.0) * (hi - lo)
+        return torch.where(bounded, decoded, value), value_index
+
     def sample_as_tokens(self, tokens: Tokens) -> Tokens:
         value, value_index = self.sample(tokens)
         return tokens.with_values(value=value, value_index=value_index, mode=VALUE)
+
+    def sample_as_context_tokens(self, tokens: Tokens) -> Tokens:
+        """Sample tokens suitable for appending back into context.
+
+        Bounded continuous latent samples are emitted as zero-spread PRIOR
+        information tokens. Data and discrete samples remain VALUE tokens.
+        """
+
+        value, value_index = self.sample(tokens)
+        bounded = self._bounded_continuous(tokens)
+        prior = torch.zeros(
+            *tokens.var_id.shape,
+            PRIOR_FEATURES,
+            device=tokens.value.device,
+            dtype=tokens.value.dtype,
+        )
+        prior[..., 0] = torch.where(bounded, value, torch.zeros_like(value))
+        mode = torch.where(
+            bounded,
+            torch.full_like(tokens.mode, PRIOR),
+            torch.full_like(tokens.mode, VALUE),
+        )
+        return replace(tokens, value=value, value_index=value_index, prior=prior, mode=mode)
 
 
 class ACE(nn.Module):
@@ -388,12 +526,13 @@ class ACE(nn.Module):
         cfg = self.cfg
         if cfg.d_model % cfg.n_heads != 0:
             raise ValueError("d_model must be divisible by n_heads")
-        if any(v.prior_bins is not None and v.prior_bins != cfg.prior_bins for v in self.variables):
-            raise ValueError("nanoACE currently uses one global prior_bins")
 
         n_vars = len(self.variables)
         is_discrete = torch.tensor([v.value_type == "discrete" for v in self.variables], dtype=torch.bool)
         is_latent = torch.tensor([v.kind == "latent" for v in self.variables], dtype=torch.bool)
+        has_bounds = torch.tensor([v.bounds is not None for v in self.variables], dtype=torch.bool)
+        bound_lo = torch.tensor([v.bounds[0] if v.bounds is not None else 0.0 for v in self.variables], dtype=torch.float32)
+        bound_hi = torch.tensor([v.bounds[1] if v.bounds is not None else 1.0 for v in self.variables], dtype=torch.float32)
         cardinality = torch.tensor([v.cardinality or 0 for v in self.variables], dtype=torch.long)
         offsets = []
         total_disc = 0
@@ -405,6 +544,9 @@ class ACE(nn.Module):
 
         self.register_buffer("is_discrete", is_discrete, persistent=False)
         self.register_buffer("is_latent", is_latent, persistent=False)
+        self.register_buffer("has_bounds", has_bounds, persistent=False)
+        self.register_buffer("bound_lo", bound_lo, persistent=False)
+        self.register_buffer("bound_hi", bound_hi, persistent=False)
         self.register_buffer("cardinality", cardinality, persistent=False)
         self.register_buffer("disc_offsets", torch.tensor(offsets, dtype=torch.long), persistent=False)
 
@@ -412,7 +554,7 @@ class ACE(nn.Module):
         self.mode_embed = nn.Embedding(3, cfg.d_model)
         self.x_embed = _mlp(cfg.x_dim, cfg.mlp_hidden, cfg.d_model)
         self.value_embed = _mlp(1, cfg.mlp_hidden, cfg.d_model)
-        self.prior_embed = _mlp(cfg.prior_bins, cfg.mlp_hidden, cfg.d_model)
+        self.spread_embed = _mlp(PRIOR_FEATURES, cfg.mlp_hidden, cfg.d_model)
         self.disc_value_embed = nn.Embedding(max(total_disc, 1), cfg.d_model)
         self.unknown = nn.Parameter(torch.zeros(cfg.d_model))
         nn.init.normal_(self.unknown, std=0.02)
@@ -446,7 +588,9 @@ class ACE(nn.Module):
         val_cont = self.value_embed(tokens.value.unsqueeze(-1))
         val = torch.where(discrete.unsqueeze(-1), val_disc, val_cont)
 
-        prior = self.prior_embed(tokens.prior)
+        prior_input = tokens.prior[..., :PRIOR_FEATURES]
+        prior = self.value_embed(prior_input[..., 0:1])
+        prior = prior + prior_input[..., 1:2] * self.spread_embed(prior_input)
         unknown = self.unknown.view(1, 1, -1).expand_as(var)
 
         # QUERY tokens use a learned unknown-value embedding, even if target truth
@@ -469,7 +613,11 @@ class ACE(nn.Module):
             cont_raw=self.cont_head(tgt),
             disc_logits=self.disc_head(tgt),
             is_discrete=self.is_discrete,
+            is_latent=self.is_latent,
             cardinality=self.cardinality,
+            has_bounds=self.has_bounds,
+            bound_lo=self.bound_lo,
+            bound_hi=self.bound_hi,
             min_scale=self.cfg.min_scale,
         )
 
@@ -492,6 +640,83 @@ class ACE(nn.Module):
         )
         weights = weights * batch.target.mask.to(logp.dtype)
         return -(logp * weights).sum() / weights.sum().clamp_min(1.0)
+
+
+def append_or_replace_context_token(
+    context: Tokens,
+    token: Tokens,
+    *,
+    is_latent: torch.Tensor,
+    is_discrete: torch.Tensor,
+    has_bounds: torch.Tensor,
+) -> Tokens:
+    """Append a context token, replacing continuous-latent info when present.
+
+    `token` may contain one or more columns. For bounded continuous latent
+    PRIOR tokens, an existing active PRIOR token with the same `var_id` is
+    replaced row-wise. Other active tokens are appended.
+    """
+
+    if token.shape[1] != 1:
+        out = context
+        for idx in range(token.shape[1]):
+            out = append_or_replace_context_token(
+                out,
+                token.column(idx),
+                is_latent=is_latent,
+                is_discrete=is_discrete,
+                has_bounds=has_bounds,
+            )
+        return out
+
+    b, _ = token.shape
+    tok_var = token.var_id[:, 0]
+    tok_active = token.mask[:, 0]
+    tok_info = (
+        tok_active
+        & (token.mode[:, 0] == PRIOR)
+        & is_latent[tok_var]
+        & has_bounds[tok_var]
+        & ~is_discrete[tok_var]
+    )
+
+    fields = {
+        "var_id": context.var_id.clone(),
+        "x": context.x.clone(),
+        "value": context.value.clone(),
+        "value_index": context.value_index.clone(),
+        "prior": context.prior.clone(),
+        "mode": context.mode.clone(),
+        "mask": context.mask.clone(),
+    }
+    replaced = torch.zeros(b, device=tok_var.device, dtype=torch.bool)
+
+    for row in range(b):
+        if not bool(tok_info[row]):
+            continue
+        match = torch.nonzero(
+            (context.var_id[row] == tok_var[row])
+            & (context.mode[row] == PRIOR)
+            & context.mask[row],
+            as_tuple=False,
+        ).flatten()
+        if match.numel() == 0:
+            continue
+        col = int(match[0])
+        fields["var_id"][row, col] = token.var_id[row, 0]
+        fields["x"][row, col] = token.x[row, 0]
+        fields["value"][row, col] = token.value[row, 0]
+        fields["value_index"][row, col] = token.value_index[row, 0]
+        fields["prior"][row, col] = token.prior[row, 0]
+        fields["mode"][row, col] = token.mode[row, 0]
+        fields["mask"][row, col] = token.mask[row, 0]
+        replaced[row] = True
+
+    updated = Tokens(**fields)
+    append_mask = tok_active & ~replaced
+    if not bool(append_mask.any()):
+        return updated
+    return cat_tokens([updated, replace(token, mask=append_mask[:, None])])
 
 
 @torch.no_grad()
@@ -524,7 +749,13 @@ def sample_ar(
     for j in order:
         query = batch.target.column(j)
         pred = model(Batch(batch.variables, context, query))
-        value_tok = pred.sample_as_tokens(query)
+        value_tok = pred.sample_as_context_tokens(query)
         sampled[j] = value_tok
-        context = cat_tokens([context, value_tok])
+        context = append_or_replace_context_token(
+            context,
+            value_tok,
+            is_latent=model.is_latent,
+            is_discrete=model.is_discrete,
+            has_bounds=model.has_bounds,
+        )
     return cat_tokens([tok for tok in sampled if tok is not None])

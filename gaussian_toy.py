@@ -1,8 +1,9 @@
 """Executable Gaussian toy example for nanoACE.
 
-Defines the fixed-prior `(mu, log_sigma)` problem, online batch generation,
-training loop, deterministic evaluation batch, analytic grid posterior,
-posterior predictive density, checkpoint helpers, and diagnostic plot.
+Defines the runtime-Beta-prior `(mu, log_sigma)` problem, online batch
+generation, training loop, deterministic evaluation batch, analytic grid
+posterior, posterior predictive density, checkpoint helpers, and diagnostic
+plot.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import torch
 
-from ace import ACE, ACEConfig, Batch, Variable, QUERY, VALUE
+from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Variable, encode_value
 from diagnostics import ar_joint_log_density, make_scalar_tokens, normalized_moments, query_log_density
 
 
@@ -23,6 +24,8 @@ LOGSIG_RANGE = (math.log(0.15), math.log(1.25))
 EVAL_Y = (0.6780859231948853, 0.852228581905365, 2.016355037689209)
 EVAL_TRUE_MU = 0.891850471496582
 EVAL_TRUE_LOGSIG = -0.4232509136199951
+EVAL_MU_PRIOR = (0.70, 20.0)
+EVAL_LOGSIG_PRIOR = (0.70, 8.0)
 
 
 @dataclass
@@ -33,6 +36,10 @@ class ToyBatch:
     y_context: torch.Tensor
     mu: torch.Tensor
     log_sigma: torch.Tensor
+    mu_prior_unit: torch.Tensor
+    mu_prior_nu: torch.Tensor
+    logsig_prior_unit: torch.Tensor
+    logsig_prior_nu: torch.Tensor
 
 
 @dataclass
@@ -50,20 +57,77 @@ class Diagnostic:
     metrics: dict[str, float]
 
 
-def variables(n_bins: int) -> list[Variable]:
+def variables() -> list[Variable]:
     """Schema for the Gaussian toy."""
 
     return [
         Variable("y", "data", "continuous"),
-        Variable("mu", "latent", "continuous", prior_range=MU_RANGE, prior_bins=n_bins),
-        Variable("log_sigma", "latent", "continuous", transform="log", prior_range=LOGSIG_RANGE, prior_bins=n_bins),
+        Variable("mu", "latent", "continuous", bounds=MU_RANGE),
+        Variable("log_sigma", "latent", "continuous", transform="log", bounds=LOGSIG_RANGE),
     ]
 
 
-def fixed_prior(batch: int, bins: int, *, device: torch.device | str) -> torch.Tensor:
-    """Uniform latent prior used by the Gaussian toy oracle."""
+def sample_prior_params(shape: tuple[int, ...], *, device: torch.device | str) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample Beta prior mean/concentration hyperparameters on unit coordinates."""
 
-    return torch.full((batch, bins), 1.0 / bins, device=device)
+    eps = 1e-4
+    choice = torch.rand(shape, device=device)
+    mu_unit = torch.empty(shape, device=device).uniform_(eps, 1.0 - eps)
+    nu = torch.empty(shape, device=device)
+
+    uniform = choice < (1.0 / 3.0)
+    broad = (choice >= (1.0 / 3.0)) & (choice < 0.5)
+    concentrated = ~(uniform | broad)
+
+    mu_unit = torch.where(uniform, torch.full_like(mu_unit, 0.5), mu_unit)
+    nu = torch.where(uniform, torch.full_like(nu, 2.0), nu)
+    nu = torch.where(broad, torch.empty(shape, device=device).uniform_(0.1, 2.0), nu)
+    log_nu = torch.empty(shape, device=device).uniform_(math.log(2.0), math.log(1000.0))
+    nu = torch.where(concentrated, log_nu.exp(), nu)
+    return mu_unit.clamp(eps, 1.0 - eps), nu
+
+
+def beta_alpha_beta(mu_unit: torch.Tensor, nu: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Convert Beta mean/concentration to shape parameters."""
+
+    return mu_unit * nu, (1.0 - mu_unit) * nu
+
+
+def prior_features(mu_unit: torch.Tensor, nu: torch.Tensor) -> torch.Tensor:
+    """Encode a finite-spread Beta prior as ACE information-token features."""
+
+    mean_internal = 2.0 * mu_unit - 1.0
+    spread_internal = ((1.0 - mean_internal.pow(2)).clamp_min(0.0) / (nu + 1.0)).sqrt()
+    return torch.stack([mean_internal, spread_internal], dim=-1)
+
+
+def known_latent_features(value_internal: torch.Tensor) -> torch.Tensor:
+    """Encode an exact known bounded latent as a zero-spread information token."""
+
+    return torch.stack([value_internal, torch.zeros_like(value_internal)], dim=-1)
+
+
+def draw_from_beta(mu_unit: torch.Tensor, nu: torch.Tensor, lo: float, hi: float) -> torch.Tensor:
+    """Draw a native-coordinate value from a rescaled Beta prior."""
+
+    alpha, beta = beta_alpha_beta(mu_unit, nu)
+    unit = torch.distributions.Beta(alpha, beta).sample()
+    return lo + unit * (hi - lo)
+
+
+def beta_logprior_on_grid(
+    grid_native: torch.Tensor,
+    mu_unit: torch.Tensor,
+    nu: torch.Tensor,
+    lo: float,
+    hi: float,
+) -> torch.Tensor:
+    """Native-coordinate Beta prior log density on a grid."""
+
+    width = hi - lo
+    unit = ((grid_native - lo) / width).clamp(1e-6, 1.0 - 1e-6)
+    alpha, beta = beta_alpha_beta(mu_unit, nu)
+    return torch.distributions.Beta(alpha, beta).log_prob(unit) - math.log(width)
 
 
 def sample_toy_batch(
@@ -73,14 +137,17 @@ def sample_toy_batch(
     max_context: int,
     min_context: int,
     data_targets: int,
-    bins: int,
     device: torch.device | str,
     latent_context_prob: float = 0.0,
 ) -> ToyBatch:
     """Generate one online training/eval batch."""
 
-    mu = torch.empty(batch_size, device=device).uniform_(*MU_RANGE)
-    log_sigma = torch.empty(batch_size, device=device).uniform_(*LOGSIG_RANGE)
+    mu_prior_unit, mu_prior_nu = sample_prior_params((batch_size,), device=device)
+    logsig_prior_unit, logsig_prior_nu = sample_prior_params((batch_size,), device=device)
+    mu = draw_from_beta(mu_prior_unit, mu_prior_nu, *MU_RANGE)
+    log_sigma = draw_from_beta(logsig_prior_unit, logsig_prior_nu, *LOGSIG_RANGE)
+    mu_internal = encode_value(vars_[1], mu)
+    logsig_internal = encode_value(vars_[2], log_sigma)
     sigma = log_sigma.exp()
 
     total_y = max_context + data_targets
@@ -103,17 +170,33 @@ def sample_toy_batch(
     ctx_var[:, logsig_value_pos] = 2
     ctx_value = torch.zeros(batch_size, ctx_t, device=device)
     ctx_value[:, :max_context] = y[:, :max_context]
-    ctx_value[:, mu_value_pos] = mu
-    ctx_value[:, logsig_value_pos] = log_sigma
+    ctx_value[:, mu_value_pos] = mu_internal
+    ctx_value[:, logsig_value_pos] = logsig_internal
+    ctx_prior = torch.zeros(batch_size, ctx_t, PRIOR_FEATURES, device=device)
+    ctx_prior[:, mu_value_pos] = prior_features(mu_prior_unit, mu_prior_nu)
+    ctx_prior[:, logsig_value_pos] = prior_features(logsig_prior_unit, logsig_prior_nu)
+    ctx_prior[:, mu_value_pos] = torch.where(
+        reveal_mu[:, None],
+        known_latent_features(mu_internal),
+        ctx_prior[:, mu_value_pos],
+    )
+    ctx_prior[:, logsig_value_pos] = torch.where(
+        reveal_logsig[:, None],
+        known_latent_features(logsig_internal),
+        ctx_prior[:, logsig_value_pos],
+    )
+    ctx_mode = torch.full((batch_size, ctx_t), VALUE, device=device)
+    ctx_mode[:, mu_value_pos] = PRIOR
+    ctx_mode[:, logsig_value_pos] = PRIOR
     ctx_mask = torch.zeros(batch_size, ctx_t, device=device, dtype=torch.bool)
     ctx_mask[:, :max_context] = ar < n_ctx[:, None]
-    ctx_mask[:, mu_value_pos] = reveal_mu
-    ctx_mask[:, logsig_value_pos] = reveal_logsig
+    ctx_mask[:, mu_value_pos] = True
+    ctx_mask[:, logsig_value_pos] = True
     context = make_scalar_tokens(
         var_id=ctx_var,
         value=ctx_value,
-        prior=torch.zeros(batch_size, ctx_t, bins, device=device),
-        mode=torch.full((batch_size, ctx_t), VALUE, device=device),
+        prior=ctx_prior,
+        mode=ctx_mode,
         mask=ctx_mask,
         x_dim=1,
     )
@@ -123,8 +206,8 @@ def sample_toy_batch(
     tgt_var[:, 0] = 1
     tgt_var[:, 1] = 2
     tgt_value = torch.zeros(batch_size, tgt_t, device=device)
-    tgt_value[:, 0] = mu
-    tgt_value[:, 1] = log_sigma
+    tgt_value[:, 0] = mu_internal
+    tgt_value[:, 1] = logsig_internal
     tgt_value[:, 2:] = y[:, max_context:]
     tgt_mask = torch.ones(batch_size, tgt_t, device=device, dtype=torch.bool)
     tgt_mask[:, 0] = ~reveal_mu
@@ -132,28 +215,45 @@ def sample_toy_batch(
     target = make_scalar_tokens(
         var_id=tgt_var,
         value=tgt_value,
-        prior=torch.zeros(batch_size, tgt_t, bins, device=device),
+        prior=torch.zeros(batch_size, tgt_t, PRIOR_FEATURES, device=device),
         mode=torch.full((batch_size, tgt_t), QUERY, device=device),
         mask=tgt_mask,
         x_dim=1,
     )
-    return ToyBatch(Batch(vars_, context, target), y[:, :max_context], mu, log_sigma)
+    return ToyBatch(
+        Batch(vars_, context, target),
+        y[:, :max_context],
+        mu,
+        log_sigma,
+        mu_prior_unit,
+        mu_prior_nu,
+        logsig_prior_unit,
+        logsig_prior_nu,
+    )
 
 
-def analytic_posterior(y_obs: torch.Tensor, *, bins: int) -> dict[str, torch.Tensor]:
+def analytic_posterior(
+    y_obs: torch.Tensor,
+    *,
+    bins: int,
+    mu_prior_unit: torch.Tensor,
+    mu_prior_nu: torch.Tensor,
+    logsig_prior_unit: torch.Tensor,
+    logsig_prior_nu: torch.Tensor,
+) -> dict[str, torch.Tensor]:
     """Exact grid posterior for the Gaussian toy."""
 
     device = y_obs.device
     mu_grid = torch.linspace(MU_RANGE[0], MU_RANGE[1], bins, device=device)
     logsig_grid = torch.linspace(LOGSIG_RANGE[0], LOGSIG_RANGE[1], bins, device=device)
-    prior_mu = fixed_prior(1, bins, device=device)[0]
-    prior_logsig = fixed_prior(1, bins, device=device)[0]
     sigma_grid = logsig_grid.exp()
     y = y_obs[None, None, :]
     mu = mu_grid[:, None, None]
     sigma = sigma_grid[None, :, None]
     loglike = (-0.5 * ((y - mu) / sigma).pow(2) - sigma.log() - 0.5 * math.log(2.0 * math.pi)).sum(dim=-1)
-    logprior = prior_mu.log().clamp_min(-1e30)[:, None] + prior_logsig.log().clamp_min(-1e30)[None, :]
+    logprior_mu = beta_logprior_on_grid(mu_grid, mu_prior_unit, mu_prior_nu, *MU_RANGE)
+    logprior_logsig = beta_logprior_on_grid(logsig_grid, logsig_prior_unit, logsig_prior_nu, *LOGSIG_RANGE)
+    logprior = logprior_mu[:, None] + logprior_logsig[None, :]
     logpost = logprior + loglike
     post = (logpost - torch.logsumexp(logpost.reshape(-1), dim=0)).exp()
     pmu = post.sum(dim=1)
@@ -212,7 +312,6 @@ def build_model(args, device: torch.device) -> ACE:
 
     cfg = ACEConfig(
         x_dim=1,
-        prior_bins=args.bins,
         d_model=args.d_model,
         n_heads=args.heads,
         n_layers=args.layers,
@@ -220,7 +319,7 @@ def build_model(args, device: torch.device) -> ACE:
         head_hidden=args.hidden,
         mdn_components=args.components,
     )
-    return ACE(variables(args.bins), cfg).to(device)
+    return ACE(variables(), cfg).to(device)
 
 
 def train(args: argparse.Namespace, model: ACE | None = None) -> ACE:
@@ -238,7 +337,6 @@ def train(args: argparse.Namespace, model: ACE | None = None) -> ACE:
             max_context=args.max_context,
             min_context=args.min_context,
             data_targets=args.data_targets,
-            bins=model.cfg.prior_bins,
             device=device,
             latent_context_prob=args.latent_context_prob,
         )
@@ -266,12 +364,12 @@ def load_checkpoint(path: str | Path, device: torch.device) -> ACE:
 
     payload = torch.load(path, map_location=device, weights_only=False)
     cfg = ACEConfig(**payload["cfg"])
-    model = ACE(variables(cfg.prior_bins), cfg).to(device)
+    model = ACE(variables(), cfg).to(device)
     model.load_state_dict(payload["state_dict"])
     return model
 
 
-def fixed_eval_batch(vars_: list[Variable], *, bins: int, device: torch.device | str) -> ToyBatch:
+def fixed_eval_batch(vars_: list[Variable], *, device: torch.device | str) -> ToyBatch:
     """Build the fixed Gaussian evaluation batch used by `evaluate`.
 
     The context is the three observed `y` constants at module scope. The latent
@@ -282,38 +380,75 @@ def fixed_eval_batch(vars_: list[Variable], *, bins: int, device: torch.device |
     y_obs = torch.tensor(EVAL_Y, device=device)
     mu = torch.tensor([EVAL_TRUE_MU], device=device)
     log_sigma = torch.tensor([EVAL_TRUE_LOGSIG], device=device)
+    mu_internal = encode_value(vars_[1], mu)
+    logsig_internal = encode_value(vars_[2], log_sigma)
+    mu_prior_unit = torch.tensor([EVAL_MU_PRIOR[0]], device=device)
+    mu_prior_nu = torch.tensor([EVAL_MU_PRIOR[1]], device=device)
+    logsig_prior_unit = torch.tensor([EVAL_LOGSIG_PRIOR[0]], device=device)
+    logsig_prior_nu = torch.tensor([EVAL_LOGSIG_PRIOR[1]], device=device)
     n = y_obs.numel()
+    ctx_t = n + 2
+    ctx_var = torch.zeros(1, ctx_t, device=device, dtype=torch.long)
+    ctx_var[:, n] = 1
+    ctx_var[:, n + 1] = 2
+    ctx_value = torch.zeros(1, ctx_t, device=device)
+    ctx_value[:, :n] = y_obs[None, :]
+    ctx_value[:, n] = mu_internal
+    ctx_value[:, n + 1] = logsig_internal
+    ctx_prior = torch.zeros(1, ctx_t, PRIOR_FEATURES, device=device)
+    ctx_prior[:, n] = prior_features(mu_prior_unit, mu_prior_nu)
+    ctx_prior[:, n + 1] = prior_features(logsig_prior_unit, logsig_prior_nu)
+    ctx_mode = torch.full((1, ctx_t), VALUE, device=device)
+    ctx_mode[:, n:] = PRIOR
     context = make_scalar_tokens(
-        var_id=torch.zeros(1, n, device=device, dtype=torch.long),
-        value=y_obs[None, :],
-        prior=torch.zeros(1, n, bins, device=device),
-        mode=torch.full((1, n), VALUE, device=device),
-        mask=torch.ones(1, n, device=device, dtype=torch.bool),
+        var_id=ctx_var,
+        value=ctx_value,
+        prior=ctx_prior,
+        mode=ctx_mode,
+        mask=torch.ones(1, ctx_t, device=device, dtype=torch.bool),
         x_dim=1,
     )
     target = make_scalar_tokens(
         var_id=torch.tensor([[1, 2]], device=device),
-        value=torch.stack([mu, log_sigma], dim=1),
-        prior=torch.zeros(1, 2, bins, device=device),
+        value=torch.stack([mu_internal, logsig_internal], dim=1),
+        prior=torch.zeros(1, 2, PRIOR_FEATURES, device=device),
         mode=torch.full((1, 2), QUERY, device=device),
         mask=torch.ones(1, 2, device=device, dtype=torch.bool),
         x_dim=1,
     )
-    return ToyBatch(Batch(vars_, context, target), y_obs[None, :], mu, log_sigma)
+    return ToyBatch(
+        Batch(vars_, context, target),
+        y_obs[None, :],
+        mu,
+        log_sigma,
+        mu_prior_unit,
+        mu_prior_nu,
+        logsig_prior_unit,
+        logsig_prior_nu,
+    )
 
 
 @torch.no_grad()
-def evaluate(model: ACE) -> Diagnostic:
+def evaluate(model: ACE, *, bins: int) -> Diagnostic:
     """Compare ACE's posterior marginals and AR joint with the analytic oracle."""
 
     device = next(model.parameters()).device
-    toy = fixed_eval_batch(model.variables, bins=model.cfg.prior_bins, device=device)
-    true = analytic_posterior(toy.y_context[0], bins=model.cfg.prior_bins)
+    toy = fixed_eval_batch(model.variables, device=device)
+    true = analytic_posterior(
+        toy.y_context[0],
+        bins=bins,
+        mu_prior_unit=toy.mu_prior_unit,
+        mu_prior_nu=toy.mu_prior_nu,
+        logsig_prior_unit=toy.logsig_prior_unit,
+        logsig_prior_nu=toy.logsig_prior_nu,
+    )
     mu_grid = true["mu_grid"]
     logsig_grid = true["logsig_grid"]
-    mu_logp = query_log_density(model, toy.batch, 1, mu_grid)
-    logsig_logp = query_log_density(model, toy.batch, 2, logsig_grid)
-    joint_logp = ar_joint_log_density(model, toy.batch, mu_grid, logsig_grid, first_var=1, second_var=2)
+    mu_model_grid = encode_value(model.variables[1], mu_grid)
+    logsig_model_grid = encode_value(model.variables[2], logsig_grid)
+    mu_logp = query_log_density(model, toy.batch, 1, mu_model_grid)
+    logsig_logp = query_log_density(model, toy.batch, 2, logsig_model_grid)
+    joint_logp = ar_joint_log_density(model, toy.batch, mu_model_grid, logsig_model_grid, first_var=1, second_var=2)
     y_grid, oracle_y_pred = predictive_grid(true, toy.y_context[0])
     model_y_logp = query_log_density(model, toy.batch, 0, y_grid)
     mu_mean, mu_std = normalized_moments(mu_grid, mu_logp)
@@ -364,6 +499,20 @@ def plot_diagnostic(diag: Diagnostic, path: str | Path) -> None:
     oracle_s = diag.oracle["plogsig"].detach().cpu()
     model_mu = (diag.mu_logp - torch.logsumexp(diag.mu_logp, dim=0)).exp().detach().cpu()
     model_s = (diag.logsig_logp - torch.logsumexp(diag.logsig_logp, dim=0)).exp().detach().cpu()
+    prior_mu_logp = beta_logprior_on_grid(
+        mu,
+        diag.toy.mu_prior_unit.detach().cpu()[0],
+        diag.toy.mu_prior_nu.detach().cpu()[0],
+        *MU_RANGE,
+    )
+    prior_s_logp = beta_logprior_on_grid(
+        logsig,
+        diag.toy.logsig_prior_unit.detach().cpu()[0],
+        diag.toy.logsig_prior_nu.detach().cpu()[0],
+        *LOGSIG_RANGE,
+    )
+    prior_mu = (prior_mu_logp - torch.logsumexp(prior_mu_logp, dim=0)).exp()
+    prior_s = (prior_s_logp - torch.logsumexp(prior_s_logp, dim=0)).exp()
     y_grid = diag.y_grid.detach().cpu()
     oracle_y = diag.oracle_y_pred.detach().cpu()
     model_y = diag.model_y_logp.exp().detach().cpu()
@@ -386,12 +535,14 @@ def plot_diagnostic(diag: Diagnostic, path: str | Path) -> None:
         ax.set_xlabel("mu")
         ax.set_ylabel("log_sigma")
 
+    ax_mu.plot(mu, prior_mu, color="0.35", linestyle=":", label="prior")
     ax_mu.plot(mu, oracle_mu, label="oracle")
     ax_mu.plot(mu, model_mu, label="ACE")
     ax_mu.set_title("mu marginal")
     ax_mu.set_xlabel("mu")
     ax_mu.legend()
 
+    ax_s.plot(logsig, prior_s, color="0.35", linestyle=":", label="prior")
     ax_s.plot(logsig, oracle_s, label="oracle")
     ax_s.plot(logsig, model_s, label="ACE")
     ax_s.set_title("log_sigma marginal")
@@ -421,7 +572,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--bins", type=int, default=64)
+    p.add_argument("--bins", type=int, default=64, help="oracle/diagnostic grid bins")
     p.add_argument("--max-context", type=int, default=16)
     p.add_argument("--min-context", type=int, default=2)
     p.add_argument("--data-targets", type=int, default=4)
@@ -458,7 +609,7 @@ def main() -> None:
         model = train(args, model)
     assert model is not None
 
-    diag = evaluate(model)
+    diag = evaluate(model, bins=args.bins)
     if args.save_checkpoint:
         save_checkpoint(model, args.save_checkpoint, args)
     if not args.no_plot and args.plot_path:

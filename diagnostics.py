@@ -11,7 +11,7 @@ import math
 
 import torch
 
-from ace import ACE, Batch, Tokens, cat_tokens, QUERY, VALUE
+from ace import ACE, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, append_or_replace_context_token
 
 
 def make_scalar_tokens(
@@ -51,28 +51,41 @@ def repeat_tokens(tokens: Tokens, repeats: int) -> Tokens:
     )
 
 
-def value_token(model: ACE, *, var_id: int, values: torch.Tensor) -> Tokens:
-    """Build VALUE tokens for a latent grid value."""
+def known_context_token(model: ACE, *, var_id: int, values: torch.Tensor) -> Tokens:
+    """Build context tokens for known scalar values.
+
+    Bounded continuous latents are represented as zero-spread PRIOR tokens.
+    Data and discrete variables are represented as VALUE tokens.
+    """
 
     b = values.numel()
-    return make_scalar_tokens(
-        var_id=torch.full((b, 1), var_id, device=values.device),
+    var = torch.full((b, 1), var_id, device=values.device)
+    prior = torch.zeros(b, 1, PRIOR_FEATURES, device=values.device, dtype=values.dtype)
+    bounded = bool(model.is_latent[var_id].item() and model.has_bounds[var_id].item() and not model.is_discrete[var_id].item())
+    mode_value = PRIOR if bounded else VALUE
+    if bounded:
+        prior[:, 0, 0] = values
+    tokens = make_scalar_tokens(
+        var_id=var,
         value=values[:, None],
-        prior=torch.zeros(b, 1, model.cfg.prior_bins, device=values.device),
-        mode=torch.full((b, 1), VALUE, device=values.device),
+        prior=prior,
+        mode=torch.full((b, 1), mode_value, device=values.device),
         mask=torch.ones(b, 1, device=values.device, dtype=torch.bool),
         x_dim=model.cfg.x_dim,
     )
+    if bool(model.is_discrete[var_id].item()):
+        tokens.value_index[:, 0] = values.long()
+    return tokens
 
 
 def query_log_density(model: ACE, batch: Batch, var_id: int, values: torch.Tensor) -> torch.Tensor:
-    """Evaluate ACE's 1D marginal log density for one variable over a grid."""
+    """Evaluate ACE's token-coordinate 1D marginal log density over a grid."""
 
     b = values.numel()
     target = make_scalar_tokens(
         var_id=torch.full((b, 1), var_id, device=values.device),
         value=values[:, None],
-        prior=torch.zeros(b, 1, model.cfg.prior_bins, device=values.device),
+        prior=torch.zeros(b, 1, PRIOR_FEATURES, device=values.device, dtype=values.dtype),
         mode=torch.full((b, 1), QUERY, device=values.device),
         mask=torch.ones(b, 1, device=values.device, dtype=torch.bool),
         x_dim=model.cfg.x_dim,
@@ -90,17 +103,23 @@ def conditional_log_density(
     query_var: int,
     query_values: torch.Tensor,
 ) -> torch.Tensor:
-    """Grid of log p(query_var | context, known_var=value)."""
+    """Grid of token-coordinate log p(query_var | context, known_var=value)."""
 
     rows = []
     q = query_values.numel()
     for known in known_values:
-        known_tok = value_token(model, var_id=known_var, values=known.expand(q))
-        context = cat_tokens([repeat_tokens(batch.context, q), known_tok])
+        known_tok = known_context_token(model, var_id=known_var, values=known.expand(q))
+        context = append_or_replace_context_token(
+            repeat_tokens(batch.context, q),
+            known_tok,
+            is_latent=model.is_latent,
+            is_discrete=model.is_discrete,
+            has_bounds=model.has_bounds,
+        )
         target = make_scalar_tokens(
             var_id=torch.full((q, 1), query_var, device=query_values.device),
             value=query_values[:, None],
-            prior=torch.zeros(q, 1, model.cfg.prior_bins, device=query_values.device),
+            prior=torch.zeros(q, 1, PRIOR_FEATURES, device=query_values.device, dtype=query_values.dtype),
             mode=torch.full((q, 1), QUERY, device=query_values.device),
             mask=torch.ones(q, 1, device=query_values.device, dtype=torch.bool),
             x_dim=model.cfg.x_dim,
@@ -118,7 +137,7 @@ def ar_joint_log_density(
     first_var: int,
     second_var: int,
 ) -> torch.Tensor:
-    """Symmetrized two-variable AR joint density on a grid."""
+    """Symmetrized token-coordinate two-variable AR joint density on a grid."""
 
     log_first = query_log_density(model, batch, first_var, first_grid)
     log_second = query_log_density(model, batch, second_var, second_grid)

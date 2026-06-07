@@ -9,16 +9,64 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
-## 2026-06-06 — Prior representation: candidate redesign (idea, not yet implemented)
+## 2026-06-07 — Bounded latent coordinates and Beta information tokens
 
-The shipped prior encoder is the histogram→MLP (`Tokens.prior: [B, T, prior_bins]`,
-`prior_embed = _mlp(prior_bins, ...)`). It works but is the wrong default for nanoACE's
-scope: it spends a 64-dim, discretization-noisy vector to encode what is almost always two
-numbers, and it drags in scale coupling — `Variable.prior_range`, per-variable `prior_bins`,
-and the global-`prior_bins` validation in `ACE.__init__` exist only to pin the grid. It is
-also what made the Gaussian toy harder, which is why runtime priors were removed from that
-example. These are candidate replacements, recorded so the decision is not relitigated from
-scratch. **None is implemented yet; the histogram is still what is in the code.**
+- **Bounded continuous latents are tokenized to `[-1, 1]`.** `Variable.bounds`
+  is now the hard support in the variable's semantic/transformed coordinate
+  (`log_sigma` bounds are on `log_sigma`, not `sigma`). Data values remain in
+  task coordinates. The helpers `encode_value` / `decode_value` and
+  `encode_token_values` / `decode_token_values` centralize the affine map so
+  examples do not carry hand-rolled conversions.
+- **Histogram prior grids are removed.** `ACEConfig.prior_bins`,
+  `Variable.prior_range`, `Variable.prior_bins`, and the histogram
+  `prior_embed` MLP are gone. `Tokens.prior` is now a fixed two-feature tensor:
+  `(mean_internal, spread_internal)` for bounded continuous latent information.
+- **Known continuous latents are zero-spread information tokens.** A finite
+  spread token represents a runtime prior; spread zero represents an exact
+  known latent. The embedder uses
+  `value_embed(mean_internal) + spread * spread_embed(mean, spread)`, so the
+  zero-spread payload is exactly the same location payload used for a scalar
+  value before mode/variable embeddings are added. Exact continuous latent
+  observations use `PRIOR` mode, not `VALUE` mode.
+- **Native-coordinate prediction is explicit.** Raw `Predictions.log_prob`,
+  `.mean`, `.sample`, and `.continuous_var` remain in token coordinates because
+  training and AR context construction live there. `log_prob_native`,
+  `mean_native`, `continuous_var_native`, and `sample_native` decode bounded
+  continuous latents and apply the affine density Jacobian when needed.
+- **Gaussian is now the ACEP demo.** `gaussian_toy.py` always emits one
+  information token per continuous latent. Training samples runtime Beta priors,
+  draws the true latent from those priors, and compares against a Beta-aware
+  analytic grid posterior. Revealed continuous latents replace the finite-spread
+  prior slot with a zero-spread exact slot.
+- **Gaussian diagnostic priors are visible.** The fixed Gaussian diagnostic uses
+  moderately informative runtime priors `EVAL_MU_PRIOR = (mu_unit=0.70,
+  nu=20.0)` and `EVAL_LOGSIG_PRIOR = (mu_unit=0.70, nu=8.0)`. The `mu` prior is
+  shifted slightly left from the first implementation while keeping a simple
+  concentration; the `log_sigma` prior is deliberately broader.
+  The plot overlays these prior curves on the corresponding posterior marginal
+  panels, so the runtime prior information is visible next to the oracle and ACE
+  posterior curves.
+- **GP-1D stays finite-prior-free.** `gp1d.py` uses encoded bounded continuous
+  latent targets and zero-spread `PRIOR` tokens when lengthscale/outputscale are
+  revealed. The discrete `kernel` latent remains a VALUE-mode class label when
+  revealed, and no categorical prior token is implemented.
+- **Deferred.** The MDN still predicts unconstrained Gaussian-mixture mass in
+  token space, so exact bounded output distributions are not implemented.
+  Discrete-latent runtime prior tokens are also deferred. Existing checkpoints
+  from the histogram schema are stale and should be regenerated.
+
+---
+
+## 2026-06-06 — Prior representation: candidate redesign (resolved 2026-06-07)
+
+This section records the reasoning that led to the 2026-06-07 implementation.
+The shipped code no longer uses the histogram→MLP prior encoder. The old design
+spent a 64-dim, discretization-noisy vector to encode what is almost always two
+numbers, and it dragged in scale coupling — `Variable.prior_range`,
+per-variable `prior_bins`, and the global-`prior_bins` validation in
+`ACE.__init__` existed only to pin the grid. It is also what made the Gaussian
+toy harder, which is why runtime priors were initially removed from that
+example.
 
 - **Preferred candidate: a rescaled Beta prior token.** Encode a continuous latent's prior
   as a Beta on the latent's bounded range, user-facing `(mean, SD)`. This fits the toys
