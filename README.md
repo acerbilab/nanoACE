@@ -38,14 +38,14 @@ Implemented modules:
   posterior predictive, checkpoint helpers, and plotting.
 - [gp1d.py](gp1d.py): GP-1D regression example with continuous kernel
   hyperparameter latents, discrete kernel selection, online CPU float64 GP
-  sampling, and a fixed diagnostic plot.
+  sampling, numerical grid posterior oracle, and a fixed diagnostic plot.
 - [diagnostics.py](diagnostics.py): reusable grid-query helpers for marginal and
   two-variable AR diagnostics.
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Next work: train and inspect the GP-1D example long enough to decide whether its
-diagnostic is informative or needs a stronger oracle.
+Next work: use the GP-1D oracle to decide whether the current sampler, model
+size, or training objective needs adjustment before adding more examples.
 
 ## Setup
 
@@ -125,13 +125,16 @@ Run the GP-1D example:
 ```
 
 The GP-1D example trains on functions sampled online from four kernels: RBF,
-Matern-1/2, Matern-3/2, and periodic. Its diagnostic is not an exact posterior
-oracle. It plots a fixed sampled function, ACE's predictive mean/uncertainty,
-the posterior over the discrete kernel latent, and marginals for
-`log_lengthscale` and `log_outputscale`. The fixed diagnostic uses irregular,
-clustered context locations so nearby observations can reveal local roughness;
-evenly spaced sparse points made kernel and lengthscale inference mostly
-uninformative.
+Matern-1/2, Matern-3/2, and periodic. Its diagnostic computes a numerical grid
+oracle for the fixed context: it scores every kernel and
+`log_lengthscale`/`log_outputscale` grid point by the GP marginal likelihood,
+normalizes those quadrature weights, and reports the resulting kernel posterior,
+continuous latent marginals, and posterior predictive moments. The predictive
+oracle is the mixture of conditional GP predictives over the posterior grid, not
+a single GP at plugged-in hyperparameter means. The fixed diagnostic uses
+irregular, clustered context locations so nearby observations can reveal local
+roughness; evenly spaced sparse points made kernel and lengthscale inference
+mostly uninformative.
 
 Common artifact names used by the GP-1D example:
 
@@ -142,6 +145,12 @@ For a short GP-1D run:
 
 ```powershell
 .\.venv\Scripts\python.exe gp1d.py --steps 20 --batch-size 16
+```
+
+Reuse a saved GP-1D checkpoint and regenerate the oracle comparison plot:
+
+```powershell
+.\.venv\Scripts\python.exe gp1d.py --eval-only --load-checkpoint artifacts\gp1d.pt --plot-path artifacts\gp1d.png
 ```
 
 ## Design Notes

@@ -21,7 +21,7 @@ python -m venv .venv
 # run the Gaussian example (trains, then prints oracle-vs-model posterior moments)
 .\.venv\Scripts\python.exe gaussian_toy.py
 
-# run the GP-1D example (trains, then prints fixed-diagnostic metrics)
+# run the GP-1D example (trains, then prints oracle-vs-model GP diagnostics)
 .\.venv\Scripts\python.exe gp1d.py
 
 # short run that verifies the script starts and completes
@@ -37,9 +37,10 @@ There is no separate test suite, linter, or build step. **Verification = run `ga
 check the printed model posterior moments track the analytic `oracle` moments**. The
 Gaussian toy has an analytic grid posterior in the same file. Keep that check loose, not
 a strict quality gate (see DEVLOG "Open questions"). For `gp1d.py`, verification is a
-short run plus visual inspection of the fixed diagnostic plot. The fixed GP context uses
-clustered x-locations so local roughness is visible, but it still does not have an exact
-posterior oracle.
+short run plus visual inspection of the fixed diagnostic plot. The GP diagnostic has a
+numerical grid oracle over kernel and hyperparameters; treat it as exact up to grid
+resolution, bounded hyperparameter ranges, and Cholesky jitter, not as a closed-form
+analytic posterior.
 
 ## Architecture (the cross-file picture)
 

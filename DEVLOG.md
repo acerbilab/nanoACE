@@ -9,6 +9,99 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-06 — Prior representation: candidate redesign (idea, not yet implemented)
+
+The shipped prior encoder is the histogram→MLP (`Tokens.prior: [B, T, prior_bins]`,
+`prior_embed = _mlp(prior_bins, ...)`). It works but is the wrong default for nanoACE's
+scope: it spends a 64-dim, discretization-noisy vector to encode what is almost always two
+numbers, and it drags in scale coupling — `Variable.prior_range`, per-variable `prior_bins`,
+and the global-`prior_bins` validation in `ACE.__init__` exist only to pin the grid. It is
+also what made the Gaussian toy harder, which is why runtime priors were removed from that
+example. These are candidate replacements, recorded so the decision is not relitigated from
+scratch. **None is implemented yet; the histogram is still what is in the code.**
+
+- **Preferred candidate: a rescaled Beta prior token.** Encode a continuous latent's prior
+  as a Beta on the latent's bounded range, user-facing `(mean, SD)`. This fits the toys
+  specifically because their latents are bounded-uniform by construction (`MU_RANGE`,
+  `LOGSIG_RANGE`, `LOG_LENGTHSCALE_RANGE`, `LOG_OUTPUTSCALE_RANGE`), so a bounded prior
+  matches the true support and the no-information case is exactly `Beta(1,1) = uniform`
+  (today's generative prior). Two numbers buy uniform, Gaussian-like bumps, skew (`α≠β`),
+  and edge-peaked/U-shaped priors (`α,β<1`).
+- **Parameterization: user `(mean, SD)`, internal `(μ, ν)`, location embedded like a value.**
+  User interface `(mean, SD)` for interpretability; sample/store internally as `(μ, ν)` with
+  concentration `ν = α + β` — constraint-free, since every `μ∈(0,1), ν>0` is a valid Beta.
+  For the embedding, feed the prior **mean directly** (rescaled to the latent's range / the
+  `[-1,1]` convention), ideally through the existing `value_embed` so a prior's location
+  enters exactly like an observed value, and carry the **concentration** as a separate
+  channel. `log ν` is the natural concentration coordinate (a positive multiplicative scale
+  spanning ≈2 to 1000); **`logit μ` is not** worth it — `μ` is a bounded location with no
+  positivity or scale argument, and `d/dμ logit(μ) = 1/(μ(1−μ))` over-resolves the
+  degenerate endpoints while compressing the mid-range where informative priors usually sit.
+  (For the value-limit variant below, carry concentration as the `σ`-gated term instead of
+  raw `log ν`.) Recover shape params when needed: with variance `v`, `ν = μ(1−μ)/v − 1`,
+  `α = μν`, `β = (1−μ)ν`, valid iff `σ² < μ(1−μ)` (the Bernoulli-SD cap); clamp/validate the
+  user's `(μ, σ)` against that bound.
+- **Coordinate convention (avoid space confusion).** Three spaces: the user specifies
+  `(mean, SD)` in the latent's **original** range `[a,b]`; the **Beta math** (recover
+  `α,β`/`ν`, check validity `SD² < μ(1−μ)`) lives in **unit `[0,1]`**; the **embedding** uses
+  the `[-1,1]` convention. Maps are affine (width `w = b−a`): to unit, `μ_u = (m−a)/w`,
+  `SD_u = SD/w`; to `[-1,1]`, `m_± = 2μ_u − 1`, `SD_± = 2·SD_u` (mean through the affine map,
+  SD times the slope). Crucially **`ν` is coordinate-free** — convert `SD ↔ ν` *once* in unit
+  space, then carry `(location, ν)` and only ever transform the *location*; `ν` never changes
+  (equivalently `SD_±² = (1−m_±²)/(ν+1)`). The prior mean in `[-1,1]` lands in the same
+  coordinate as a VALUE token for that latent, which is what makes the `value_embed` reuse
+  coherent. Worked example: `[a,b]=[-2,8]`, user `mean=2, SD=2` → unit `μ=0.4, SD=0.2` (not
+  `0.5/0.25`) → `Beta(2,3)`, `ν=5` → `[-1,1]` location `−0.2`, SD `0.4`.
+- **Known-value as a limit, done honestly.** An earlier claim that a prior token "collapses
+  to a VALUE token" as spread→0 is *not* enforced by the current representation: the spread
+  MLP has no zero limit, and the additive `mode_embed(PRIOR)` vs `mode_embed(VALUE)` is a
+  constant offset that never closes. To make it real you must (a) gate the spread so it
+  vanishes by construction — e.g. payload `value_embed(mean) + σ·h(mean, σ)`, feeding `σ`
+  not `log σ` so the input stays bounded — and (b) treat a known latent as the zero-spread /
+  `ν→∞` prior token rather than a separately-moded VALUE token, so "value" *is* the boundary
+  of "prior." With Beta this falls out naturally: `ν→∞` is a spike at `μ`. Even then this is
+  representation continuity only; the model behaves like exact conditioning in the limit only
+  if training visits small spreads.
+- **Discrete latents stay separate.** Beta covers continuous bounded latents. The discrete
+  `kernel` latent's runtime prior is a categorical pmf — a small "K-probabilities" prior
+  token, not a Beta.
+- **Training implication.** Sample a Beta hyperprior `(α, β)`, draw the true latent from it,
+  build the prior token, NLL as usual. This is much simpler than the paper's
+  MoG/geometric-K/Dirichlet prior-generating machinery (already slated for slimming) and is
+  the actual distribution the model would amortize over.
+- **Default hyperprior over `(μ, ν)`.** The prior-generating mixture, defined in unit
+  `(μ, ν)` space so it is range-agnostic and reused across all continuous latents:
+  - `1/3`: `μ = 0.5, ν = 2` → exactly `Beta(1,1)` (uniform; the uninformative case).
+  - `1/6`: `μ ~ U(0,1), ν ~ U(0.1, 2)` → broad / skewed / U-shaped (`ν<1`).
+  - `1/2`: `μ ~ U(0,1), log ν ~ U(log 2, log 1000)` → concentrated, up to near-spike.
+
+  Clamp `μ` to `(ε, 1−ε)` so `α,β > 0`. Weights and bounds are tunable. The heavy `1/2`
+  mass on concentrated priors (with `ν` to 1000) is deliberate — it is where prior
+  conditioning matters most and where the `ν→∞ ≈ known-value` limit is learned. The `1/6`
+  U-shaped band is the most exotic slice and the first dial to turn if it hurts (raise
+  `ν_min`, e.g. 0.1→0.5, or lower the weight). Note `log ν ~ U(2, 1e3)` taken literally
+  overflows (`e^1000`); the intended range is `log ν ~ U(log 2, log 1000)`.
+- **ACEP always emits prior tokens; "no prior" = uniform.** The architecture does not (and
+  need not) enforce "absent prior token ≡ uniform prior," so do not train over a
+  present/absent mixture. The prior-conditioning model (ACEP) always carries one prior token
+  per continuous latent, using `Beta(1,1)` when there is no information. This is benign here
+  because the latents are bounded-uniform by construction, so the uniform token is the honest
+  "no extra info" prior rather than the hard amortization burden that arbitrary histograms
+  were. Prior-free ACE and always-prior ACEP are then simply two variants with fixed token
+  layouts (supersedes the earlier idea of a separate `prior_prob` present/absent knob).
+- **Fallbacks if more expressiveness is wanted.** Plain moments `(mean, log_std)` if even
+  Beta is more than needed (but it cannot express bounded support or skew, and a Gaussian
+  encoder leaks past the latent range); a small fixed quantile vector (e.g. 5/25/50/75/95th
+  percentiles) for asymmetric unimodal priors; a handful of orthogonal-basis coefficients
+  (Hermite/Legendre) only if arbitrary/multimodal priors become an explicit demo. All three
+  still beat a 64-bin histogram on compactness and trainability.
+- **What adopting any of these deletes.** `Tokens.prior` shrinks from `[B, T, prior_bins]`
+  to a 2–3 vector; `Variable.prior_range`, per-variable `Variable.prior_bins`, and the
+  `prior_bins != cfg.prior_bins` check all go away (a fixed small vector is never ragged);
+  "no prior" becomes "do not emit a PRIOR token" instead of an encoded uniform histogram.
+
+---
+
 ## 2026-06-06 — GP-1D executable example
 
 - **Standalone GP file.** `gp1d.py` owns the GP regression example end to end:
@@ -27,17 +120,25 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   values can naturally leave the loose `[-1, 1]` convention used by the embedders. Treat
   that as a calibration caveat, not a bug. The default Cholesky jitter is `1e-5`; increase
   it if clustered x-locations ever make Matern-1/2 or periodic kernel matrices unstable.
-- **Diagnostic.** Unlike the Gaussian toy, GP-1D does not yet compute an exact posterior
-  over kernel and hyperparameters. The fixed diagnostic plots a sampled function,
-  observed context points, ACE predictive mean/uncertainty, kernel posterior bars, and
-  continuous latent marginals. The fixed context locations are irregular and clustered,
-  including nearby pairs/triples, because sparse evenly spaced points do not say much
-  about local roughness and make kernel/lengthscale inference mostly guesswork. It is a
-  plausibility check, not a correctness oracle.
-- **Current retained GP artifact.** A 20k-step run saves `artifacts/gp1d.pt` and
-  `artifacts/gp1d.png`. With the clustered fixed diagnostic, the current checkpoint gives
-  the true Matern-3/2 kernel the largest posterior mass, but still underestimates output
-  scale; treat it as a working first artifact, not a converged model.
+- **Diagnostic.** GP-1D now computes a numerical grid oracle for the fixed context.
+  For each kernel and each `log_lengthscale`/`log_outputscale` grid point, it evaluates
+  the GP marginal likelihood of the observed context, applies uniform-prior quadrature
+  weights, and normalizes over the full kernel-by-hyperparameter grid. The diagnostic
+  reports per-kernel integrated marginal likelihood deltas, the kernel posterior,
+  continuous latent marginals, and the posterior predictive moments formed by mixing
+  conditional GP predictives over the grid. This is not a closed-form analytic posterior;
+  it is an oracle up to grid resolution, the bounded hyperparameter ranges, and the
+  Cholesky jitter used by the sampler. The fixed context locations are irregular and
+  clustered, including nearby pairs/triples, because sparse evenly spaced points do not
+  say much about local roughness and make kernel/lengthscale inference mostly guesswork.
+- **Current retained GP artifact.** The retained `artifacts/gp1d.pt` / `artifacts/gp1d.png`
+  pair is a 100k-step online run. On the fixed diagnostic, the generating kernel is
+  Matern-3/2, but the numerical oracle gives posterior mass roughly RBF 0.70,
+  Matern-1/2 0.02, Matern-3/2 0.28, periodic 0.00; the checkpoint gives roughly RBF
+  0.74, Matern-1/2 0.02, Matern-3/2 0.24, periodic 0.00. The oracle-vs-ACE kernel KL is
+  about 0.01, and the predictive RMSEs are similar. The current artifact is useful for
+  checking the machinery, but it should not be treated as evidence that the training
+  setup has converged in general.
 
 ---
 

@@ -55,7 +55,22 @@ class Diagnostic:
     scale_grid: torch.Tensor
     scale_logp: torch.Tensor
     kernel_probs: torch.Tensor
+    oracle: "GPOracle"
     metrics: dict[str, float]
+
+
+@dataclass
+class GPOracle:
+    """Grid posterior and posterior predictive for the fixed GP diagnostic."""
+
+    kernel_log_marginal: torch.Tensor
+    kernel_probs: torch.Tensor
+    ell_grid: torch.Tensor
+    ell_probs: torch.Tensor
+    scale_grid: torch.Tensor
+    scale_probs: torch.Tensor
+    y_mean: torch.Tensor
+    y_std: torch.Tensor
 
 
 def variables(n_bins: int) -> list[Variable]:
@@ -98,17 +113,16 @@ def make_tokens(
     )
 
 
-def _kernel_matrix(
-    x: torch.Tensor,
+def _kernel_covariance(
+    x_left: torch.Tensor,
+    x_right: torch.Tensor,
     kernel: torch.Tensor,
     log_lengthscale: torch.Tensor,
     log_outputscale: torch.Tensor,
-    *,
-    jitter: float,
 ) -> torch.Tensor:
-    """Batch of GP covariance matrices on CPU float64 tensors."""
+    """Batch of GP cross-covariance matrices on CPU float64 tensors."""
 
-    r = (x[:, :, None] - x[:, None, :]).abs()
+    r = (x_left[:, :, None] - x_right[:, None, :]).abs()
     ell = log_lengthscale.exp()[:, None, None].clamp_min(1e-6)
     amp2 = log_outputscale.exp().pow(2)[:, None, None]
     mats = torch.empty_like(r)
@@ -133,6 +147,20 @@ def _kernel_matrix(
             raise ValueError(f"unknown kernel {name}")
         mats[sel] = amp2[sel] * base
 
+    return mats
+
+
+def _kernel_matrix(
+    x: torch.Tensor,
+    kernel: torch.Tensor,
+    log_lengthscale: torch.Tensor,
+    log_outputscale: torch.Tensor,
+    *,
+    jitter: float,
+) -> torch.Tensor:
+    """Batch of GP covariance matrices on CPU float64 tensors."""
+
+    mats = _kernel_covariance(x, x, kernel, log_lengthscale, log_outputscale)
     eye = torch.eye(x.shape[1], dtype=x.dtype, device=x.device)
     return mats + jitter * eye
 
@@ -381,51 +409,162 @@ def kernel_posterior(model: ACE, batch: Batch) -> torch.Tensor:
     return (logp - torch.logsumexp(logp, dim=0)).exp()
 
 
+def _moments_from_probs(grid: torch.Tensor, probs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Mean/std for normalized probability mass on a grid."""
+
+    mean = (probs * grid).sum()
+    std = (probs * (grid - mean).pow(2)).sum().sqrt()
+    return mean, std
+
+
+def gp_oracle(
+    toy: GPBatch,
+    *,
+    bins: int,
+    jitter: float,
+    chunk: int,
+) -> GPOracle:
+    """Numerically integrate the GP posterior over kernel and hyperparameters."""
+
+    if bins < 2:
+        raise ValueError("GP oracle needs at least two grid bins")
+
+    x_ctx = toy.x_context[0].detach().cpu().double()
+    y_ctx = toy.y_context[0].detach().cpu().double()
+    x_tgt = toy.x_target[0].detach().cpu().double()
+    n = x_ctx.numel()
+
+    ell_grid = torch.linspace(LOG_LENGTHSCALE_RANGE[0], LOG_LENGTHSCALE_RANGE[1], bins, dtype=torch.float64)
+    scale_grid = torch.linspace(LOG_OUTPUTSCALE_RANGE[0], LOG_OUTPUTSCALE_RANGE[1], bins, dtype=torch.float64)
+    ell_w = torch.ones(bins, dtype=torch.float64)
+    scale_w = torch.ones(bins, dtype=torch.float64)
+    ell_w[[0, -1]] = 0.5
+    scale_w[[0, -1]] = 0.5
+    ell_step = (LOG_LENGTHSCALE_RANGE[1] - LOG_LENGTHSCALE_RANGE[0]) / (bins - 1)
+    scale_step = (LOG_OUTPUTSCALE_RANGE[1] - LOG_OUTPUTSCALE_RANGE[0]) / (bins - 1)
+    log_cell = math.log(ell_step * scale_step) - math.log(
+        (LOG_LENGTHSCALE_RANGE[1] - LOG_LENGTHSCALE_RANGE[0])
+        * (LOG_OUTPUTSCALE_RANGE[1] - LOG_OUTPUTSCALE_RANGE[0])
+    )
+    kernel_grid = torch.arange(len(KERNELS), dtype=torch.float64)
+    kk, ee, ss = torch.meshgrid(kernel_grid, ell_grid, scale_grid, indexing="ij")
+    flat_kernel = kk.reshape(-1).long()
+    flat_ell = ee.reshape(-1)
+    flat_scale = ss.reshape(-1)
+    _, ew, sw = torch.meshgrid(kernel_grid, ell_w, scale_w, indexing="ij")
+    log_quad = (ew * sw).reshape(-1).log() + log_cell
+    g = flat_kernel.numel()
+
+    x_batch = x_ctx.expand(g, n)
+    kcc = _kernel_matrix(x_batch, flat_kernel, flat_ell, flat_scale, jitter=jitter)
+    chol = torch.linalg.cholesky(kcc)
+    y = y_ctx.view(1, n, 1).expand(g, n, 1)
+    alpha = torch.cholesky_solve(y, chol).squeeze(-1)
+    quad = (y.squeeze(-1) * alpha).sum(dim=1)
+    logdet = 2.0 * chol.diagonal(dim1=-2, dim2=-1).log().sum(dim=1)
+    log_like = -0.5 * (quad + logdet + n * math.log(2.0 * math.pi))
+    log_joint = log_like + log_quad
+    log_joint_by_kernel = log_joint.reshape(len(KERNELS), bins, bins)
+    kernel_log_marginal = torch.logsumexp(log_joint_by_kernel.flatten(1), dim=1)
+    log_post = log_joint - torch.logsumexp(log_joint, dim=0)
+    weights = log_post.exp()
+    post = weights.reshape(len(KERNELS), bins, bins)
+
+    kernel_probs = post.sum(dim=(1, 2))
+    ell_probs = post.sum(dim=(0, 2))
+    scale_probs = post.sum(dim=(0, 1))
+
+    p = x_tgt.numel()
+    mean_acc = torch.zeros(p, dtype=torch.float64)
+    second_acc = torch.zeros(p, dtype=torch.float64)
+    for start in range(0, g, chunk):
+        end = min(start + chunk, g)
+        b = end - start
+        kernel_s = flat_kernel[start:end]
+        ell_s = flat_ell[start:end]
+        scale_s = flat_scale[start:end]
+        x_left = x_tgt.expand(b, p)
+        x_right = x_ctx.expand(b, n)
+        ktc = _kernel_covariance(x_left, x_right, kernel_s, ell_s, scale_s)
+        solved = torch.cholesky_solve(ktc.transpose(1, 2), chol[start:end])
+        mean = torch.bmm(ktc, alpha[start:end, :, None]).squeeze(-1)
+        diag = (ktc * solved.transpose(1, 2)).sum(dim=-1)
+        prior_var = scale_s.exp().pow(2)[:, None] + jitter
+        var = (prior_var - diag).clamp_min(1e-10)
+        w = weights[start:end, None]
+        mean_acc += (w * mean).sum(dim=0)
+        second_acc += (w * (var + mean.pow(2))).sum(dim=0)
+
+    y_mean = mean_acc
+    y_std = (second_acc - y_mean.pow(2)).clamp_min(1e-10).sqrt()
+    return GPOracle(kernel_log_marginal, kernel_probs, ell_grid, ell_probs, scale_grid, scale_probs, y_mean, y_std)
+
+
 @torch.no_grad()
 def evaluate(model: ACE, args: argparse.Namespace) -> Diagnostic:
     """Run the fixed GP diagnostic and print compact metrics."""
 
     device = next(model.parameters()).device
     toy = fixed_eval_batch(model.variables, bins=model.cfg.prior_bins, device=device, points=args.eval_points, jitter=args.jitter)
+    oracle = gp_oracle(toy, bins=args.oracle_bins, jitter=args.jitter, chunk=args.oracle_chunk)
     pred = model(toy.batch)
     y_mean = pred.mean(toy.batch.target)[0]
     y_std = pred.continuous_var()[0].clamp_min(1e-8).sqrt()
     y_logp = pred.log_prob(toy.batch.target)[0]
 
-    ell_grid = torch.linspace(LOG_LENGTHSCALE_RANGE[0], LOG_LENGTHSCALE_RANGE[1], args.bins, device=device)
-    scale_grid = torch.linspace(LOG_OUTPUTSCALE_RANGE[0], LOG_OUTPUTSCALE_RANGE[1], args.bins, device=device)
+    ell_grid = torch.linspace(LOG_LENGTHSCALE_RANGE[0], LOG_LENGTHSCALE_RANGE[1], args.oracle_bins, device=device)
+    scale_grid = torch.linspace(LOG_OUTPUTSCALE_RANGE[0], LOG_OUTPUTSCALE_RANGE[1], args.oracle_bins, device=device)
     ell_logp = query_log_density(model, toy.batch, 1, ell_grid)
     scale_logp = query_log_density(model, toy.batch, 2, scale_grid)
     kernel_probs = kernel_posterior(model, toy.batch)
     ell_mean, ell_std = normalized_moments(ell_grid, ell_logp)
     scale_mean, scale_std = normalized_moments(scale_grid, scale_logp)
+    oracle_ell_mean, oracle_ell_std = _moments_from_probs(oracle.ell_grid, oracle.ell_probs)
+    oracle_scale_mean, oracle_scale_std = _moments_from_probs(oracle.scale_grid, oracle.scale_probs)
+    log_marginal_delta = oracle.kernel_log_marginal - oracle.kernel_log_marginal.max()
 
     rmse = (y_mean - toy.y_target[0]).pow(2).mean().sqrt()
     nll = -y_logp.mean()
     true_kernel_prob = kernel_probs[int(toy.kernel[0])]
+    oracle_true_kernel_prob = oracle.kernel_probs[int(toy.kernel[0])]
+    oracle_rmse = (oracle.y_mean.to(device) - toy.y_target[0]).pow(2).mean().sqrt()
+    kernel_kl = (oracle.kernel_probs * (oracle.kernel_probs.clamp_min(1e-12).log() - kernel_probs.detach().cpu().clamp_min(1e-12).log())).sum()
     metrics = {
         "y_rmse": float(rmse),
         "y_nll": float(nll),
+        "oracle_y_rmse": float(oracle_rmse),
         "kernel_true_prob": float(true_kernel_prob),
+        "oracle_kernel_true_prob": float(oracle_true_kernel_prob),
+        "kernel_kl_oracle_model": float(kernel_kl),
         "log_lengthscale_mean": float(ell_mean),
         "log_lengthscale_std": float(ell_std),
+        "oracle_log_lengthscale_mean": float(oracle_ell_mean),
+        "oracle_log_lengthscale_std": float(oracle_ell_std),
         "log_outputscale_mean": float(scale_mean),
         "log_outputscale_std": float(scale_std),
+        "oracle_log_outputscale_mean": float(oracle_scale_mean),
+        "oracle_log_outputscale_std": float(oracle_scale_std),
     }
+    metrics.update({f"oracle_log_marginal_delta_{name}": float(delta) for name, delta in zip(KERNELS, log_marginal_delta)})
 
     print("\nGP-1D diagnostic")
     print(f"truth kernel        {KERNELS[int(toy.kernel[0])]}")
     print(f"truth log_length    {float(toy.log_lengthscale[0]): .3f}")
-    print(f"model log_length    mean {float(ell_mean): .3f}  std {float(ell_std): .3f}")
+    print(f"oracle log_length   mean {float(oracle_ell_mean): .3f}  std {float(oracle_ell_std): .3f}")
+    print(f"ACE log_length      mean {float(ell_mean): .3f}  std {float(ell_std): .3f}")
     print(f"truth log_output    {float(toy.log_outputscale[0]): .3f}")
-    print(f"model log_output    mean {float(scale_mean): .3f}  std {float(scale_std): .3f}")
-    print(f"kernel true prob    {float(true_kernel_prob): .3f}")
-    print(f"target y            rmse {float(rmse): .3f}  nll {float(nll): .3f}")
-    return Diagnostic(toy, y_mean, y_std, ell_grid, ell_logp, scale_grid, scale_logp, kernel_probs, metrics)
+    print(f"oracle log_output   mean {float(oracle_scale_mean): .3f}  std {float(oracle_scale_std): .3f}")
+    print(f"ACE log_output      mean {float(scale_mean): .3f}  std {float(scale_std): .3f}")
+    print("oracle log marg delta " + "  ".join(f"{name} {float(delta):.2f}" for name, delta in zip(KERNELS, log_marginal_delta)))
+    print("oracle kernel       " + "  ".join(f"{name} {float(prob):.3f}" for name, prob in zip(KERNELS, oracle.kernel_probs)))
+    print("ACE kernel          " + "  ".join(f"{name} {float(prob):.3f}" for name, prob in zip(KERNELS, kernel_probs)))
+    print(f"kernel true prob    oracle {float(oracle_true_kernel_prob): .3f}  ACE {float(true_kernel_prob): .3f}")
+    print(f"target y            oracle rmse {float(oracle_rmse): .3f}  ACE rmse {float(rmse): .3f}  ACE nll {float(nll): .3f}")
+    return Diagnostic(toy, y_mean, y_std, ell_grid, ell_logp, scale_grid, scale_logp, kernel_probs, oracle, metrics)
 
 
 def plot_diagnostic(diag: Diagnostic, path: str | Path) -> None:
-    """Save a compact GP-1D diagnostic figure."""
+    """Save an oracle-vs-ACE diagnostic figure for the fixed GP problem."""
 
     import matplotlib.pyplot as plt
 
@@ -438,11 +577,19 @@ def plot_diagnostic(diag: Diagnostic, path: str | Path) -> None:
     y = diag.toy.y_target[0].detach().cpu()
     y_mean = diag.y_mean.detach().cpu()
     y_std = diag.y_std.detach().cpu()
+    oracle_y_mean = diag.oracle.y_mean.detach().cpu()
+    oracle_y_std = diag.oracle.y_std.detach().cpu()
     ell_grid = diag.ell_grid.detach().cpu()
     ell_p = (diag.ell_logp - torch.logsumexp(diag.ell_logp, dim=0)).exp().detach().cpu()
+    oracle_ell_grid = diag.oracle.ell_grid.detach().cpu()
+    oracle_ell_p = diag.oracle.ell_probs.detach().cpu()
     scale_grid = diag.scale_grid.detach().cpu()
     scale_p = (diag.scale_logp - torch.logsumexp(diag.scale_logp, dim=0)).exp().detach().cpu()
+    oracle_scale_grid = diag.oracle.scale_grid.detach().cpu()
+    oracle_scale_p = diag.oracle.scale_probs.detach().cpu()
     kernel_p = diag.kernel_probs.detach().cpu()
+    oracle_kernel_p = diag.oracle.kernel_probs.detach().cpu()
+    true_kernel = int(diag.toy.kernel[0])
 
     fig = plt.figure(figsize=(10, 7), constrained_layout=True)
     gs = fig.add_gridspec(2, 2, height_ratios=[1.15, 1.0])
@@ -451,30 +598,53 @@ def plot_diagnostic(diag: Diagnostic, path: str | Path) -> None:
     ax_latent = fig.add_subplot(gs[1, 1])
 
     ax_y.plot(x, y, color="0.25", linewidth=1.4, label="sampled function")
-    ax_y.plot(x, y_mean, color="tab:blue", label="ACE mean")
-    ax_y.fill_between(x, y_mean - 2.0 * y_std, y_mean + 2.0 * y_std, color="tab:blue", alpha=0.18, label="+/-2 std")
+    ax_y.plot(x, oracle_y_mean, color="tab:green", linewidth=1.5, label="oracle mean")
+    ax_y.fill_between(
+        x,
+        oracle_y_mean - 2.0 * oracle_y_std,
+        oracle_y_mean + 2.0 * oracle_y_std,
+        color="tab:green",
+        alpha=0.14,
+        label="oracle +/-2 std",
+    )
+    ax_y.plot(x, y_mean, color="tab:blue", linewidth=1.5, label="ACE mean")
+    ax_y.fill_between(x, y_mean - 2.0 * y_std, y_mean + 2.0 * y_std, color="tab:blue", alpha=0.16, label="ACE +/-2 std")
     ax_y.scatter(x_ctx, y_ctx, color="black", s=28, zorder=3, label="context")
-    ax_y.set_title("GP-1D predictive")
+    ax_y.set_title("posterior predictive")
     ax_y.set_xlabel("x")
     ax_y.set_ylabel("y")
     ax_y.legend(loc="best")
 
-    bars = ax_kernel.bar(KERNELS, kernel_p)
-    bars[int(diag.toy.kernel[0])].set_color("tab:orange")
+    xpos = list(range(len(KERNELS)))
+    width = 0.38
+    oracle_bars = ax_kernel.bar([i - width / 2 for i in xpos], oracle_kernel_p, width=width, color="tab:green", label="oracle")
+    ace_bars = ax_kernel.bar([i + width / 2 for i in xpos], kernel_p, width=width, color="tab:blue", label="ACE")
+    for bars in (oracle_bars, ace_bars):
+        bars[true_kernel].set_edgecolor("tab:orange")
+        bars[true_kernel].set_linewidth(2.0)
     ax_kernel.set_ylim(0.0, 1.0)
     ax_kernel.set_title("kernel posterior")
+    ax_kernel.set_xticks(xpos, KERNELS)
     ax_kernel.tick_params(axis="x", rotation=20)
+    ax_kernel.legend()
 
-    ax_latent.plot(ell_grid, ell_p, label="log_lengthscale")
-    ax_latent.plot(scale_grid, scale_p, label="log_outputscale")
+    ax_latent.plot(oracle_ell_grid, oracle_ell_p, color="tab:blue", linewidth=1.5, label="oracle log_lengthscale")
+    ax_latent.plot(ell_grid, ell_p, color="tab:blue", linestyle="--", linewidth=1.5, label="ACE log_lengthscale")
+    ax_latent.plot(oracle_scale_grid, oracle_scale_p, color="tab:orange", linewidth=1.5, label="oracle log_outputscale")
+    ax_latent.plot(scale_grid, scale_p, color="tab:orange", linestyle="--", linewidth=1.5, label="ACE log_outputscale")
     ax_latent.axvline(float(diag.toy.log_lengthscale[0]), color="tab:blue", alpha=0.35)
     ax_latent.axvline(float(diag.toy.log_outputscale[0]), color="tab:orange", alpha=0.35)
     ax_latent.set_title("latent marginals")
     ax_latent.set_xlabel("latent value")
-    ax_latent.set_ylabel("density on grid")
+    ax_latent.set_ylabel("posterior mass on grid")
     ax_latent.legend()
 
-    fig.suptitle(f"truth kernel={KERNELS[int(diag.toy.kernel[0])]}, y RMSE={diag.metrics['y_rmse']:.2f}")
+    fig.suptitle(
+        f"truth kernel={KERNELS[true_kernel]}, "
+        f"oracle RMSE={diag.metrics['oracle_y_rmse']:.2f}, "
+        f"ACE RMSE={diag.metrics['y_rmse']:.2f}, "
+        f"kernel KL={diag.metrics['kernel_kl_oracle_model']:.2f}"
+    )
     fig.savefig(path, dpi=160)
     plt.close(fig)
     print(f"saved diagnostic plot: {path}")
@@ -493,6 +663,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-context", type=int, default=4)
     p.add_argument("--data-targets", type=int, default=32)
     p.add_argument("--eval-points", type=int, default=160)
+    p.add_argument("--oracle-bins", type=int, default=64)
+    p.add_argument("--oracle-chunk", type=int, default=512)
     p.add_argument("--d-model", type=int, default=128)
     p.add_argument("--heads", type=int, default=4)
     p.add_argument("--layers", type=int, default=4)
