@@ -12,6 +12,8 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 ## 2026-06-07 — 1D Bayesian optimization example (planned)
 
 Full design in [PLAN-bo1d.md](PLAN-bo1d.md). Status: planned, not yet built.
+The plan was checked by two reviewers; this entry reflects the revised plan
+(see PLAN-bo1d.md "Review notes").
 
 - **Fourth example: `bo1d.py`.** 1D Bayesian optimization. The two latents are the
   global optimum's **location** `x_opt` and **value** `y_opt`. The headline is that
@@ -19,7 +21,7 @@ Full design in [PLAN-bo1d.md](PLAN-bo1d.md). Status: planned, not yet built.
   the reason BO needs bespoke acquisition machinery) and accepts a runtime Beta
   prior over the optimum location (the paper's πBO / ACEP-TS). It is a mix:
   GP function sampling + sampled kernel/hyperparameters from `gp1d.py`, ACEP Beta
-  prior tokens + the reveal mechanism from the prior-conditioning examples, and a
+  prior tokens + the gaussian/sir reveal mechanism + observation noise, and a
   new optimum-planting DGP. Both latents are bounded continuous and reuse the
   existing PRIOR-token path, so there is **no new `ace.py` machinery**.
 - **Latents are instance properties, not class properties.** Unlike `gp1d.py`
@@ -28,42 +30,73 @@ Full design in [PLAN-bo1d.md](PLAN-bo1d.md). Status: planned, not yet built.
   `p(x_opt | D)` worth amortizing. The kernel/lengthscale/outputscale are sampled
   **nuisance**, not predicted -- `gp1d.py` already covers the discrete/kernel path,
   so a kernel latent here would be redundant.
-- **Full DGP, faithful to Appendix C.3.1.** Sample hyperparameters; draw `x_opt`
+- **DGP adapted from Appendix C.3.1** (not faithful -- the fold operand and the
+  role of the min-value distribution differ). Sample hyperparameters; draw `x_opt`
   from the (contaminated) prior; draw the natural optimum depth `d` from the
-  min-value distribution (min of `~2/ℓ` Gaussian draws, with `p=0.1` an extra
-  `Exp(1)` "unexpectedly low" kick); sample a GP draw conditioned on the optimum
-  geometry `g(x_opt)=d`; then fold+envelope
-  `f(x) = |g(x) − d| + (1/5)(x − x_opt)² + y_opt`, which makes `x_opt` the exact
-  unique global minimum with value `y_opt`. The min-value machinery shapes the
-  *local geometry/depth*; **our prior is the leveling shift `y_opt`**, replacing
-  the paper's final `U[-5, 5]` offset. This corrects an earlier mistaken plan to
-  drop the min-value/`Exp(1)` tricks: they stay (they shape the function); the
-  prior only sets the absolute level.
-- **No grid oracle.** The `|·|` fold destroys Gaussianity, so unlike the other
-  three examples there is no closed-form posterior. Verification is qualitative:
-  short run + a token-scale histogram check + a fixed diagnostic that plots the
-  true function, marks true `(x_opt, y_opt)`, and shows ACE's marginals
-  concentrating near truth. This is a deliberate break from the "every example has
-  a grid oracle" convention, recorded here and in `AGENTS.md`.
+  min-value distribution (min of `N = ceil(2/ℓ)` Gaussian draws, with `p=0.1` an
+  extra `Exp(1)` "unexpectedly low" kick), then clamp `d = min(d, 0)` and cap
+  `|d|`; sample a GP draw conditioned on `g_c(x_opt)=d` via **Matheron's rule** (a
+  true posterior sample, not a mean-shift); then fold+envelope
+  `f(x) = |g_c(x) − d| + (1/5)(x − x_opt)² + y_opt`. Both added terms are `≥ 0`
+  and vanish together only at `x = x_opt`, and the envelope is strictly positive
+  off `x_opt`, so `x_opt` is the **exact, unique** global minimum with value
+  `y_opt` -- level-`d` re-crossings of the fold are lifted above `y_opt` by the
+  envelope (they create the kinked Fig.-S12 geometry / multi-basin structure, not
+  spurious minima). The min-value machinery shapes the *local geometry/depth* (the
+  conditioning bump's depth is set by `d`, its width by the lengthscale); **our
+  prior is the leveling shift `y_opt`**, replacing the paper's final `U[-5, 5]`
+  offset. This honors keeping the full min-value/`Exp(1)` machinery: it shapes the
+  function; the prior only sets the absolute level.
+- **No oracle (deliberate).** The `|·|` fold destroys Gaussianity, so there is no
+  closed-form posterior, and the other three examples already carry numerical grid
+  oracles -- this one demonstrates the no-oracle case. A Monte-Carlo simulator
+  posterior was considered and declined. The gate is **structural + qualitative**:
+  short run + a token-scale + contamination-marginal histogram check + a fixed
+  diagnostic plotting the true function, marked true `(x_opt, y_opt)`, and ACE's
+  marginals. The three prior columns give real falsifiability -- uniform→correct
+  must tighten (the model uses priors) and correct→wrong must recover (it does not
+  blindly follow). Recorded here and in `AGENTS.md` as a departure from the oracle
+  convention.
 - **ε-contamination ("robust prior").** The effective generative prior is
   `(1−ε)·Beta + ε·Uniform` (ε≈0.1, a classic robust-Bayes / ε-contamination
-  prior), applied to both latents. The token still encodes only the raw `Beta`;
-  because ε is a fixed global constant the model learns to discount every injected
-  prior automatically, so a confidently *wrong* user prior is overridden by the
-  data. This lives entirely in the DGP truth-sampling (and plot overlays), not in
-  the token or model -- a single Beta token cannot represent a mixture, and it does
-  not need to. New `ace_prior.py` helpers: `sample_contaminated`,
-  `mixture_logprior_on_grid`. The diagnostic makes this visible with three prior
-  columns: uniform / correct-informative / **wrong-informative**.
+  prior), applied to both latents. **Why it is not redundant with the existing
+  `sample_prior_params` mixture:** that helper always draws truth from the *same*
+  Beta the token encodes -- the token never lies -- so a model trained on it learns
+  to trust a concentrated token fully and the wrong-prior column would fail.
+  ε-contamination's job is to **decouple truth from the token** a fraction ε of the
+  time, the one thing `sample_prior_params` cannot do. So `bo1d` reuses
+  `sample_prior_params` for the token and applies contamination *only at the
+  truth-draw* (new `ace_prior.sample_contaminated`). It lives entirely in the DGP
+  truth-draw and plot overlays, not in the token or model (a single Beta token
+  cannot represent a mixture, and need not). Corrected framing: the model does not
+  learn "a global discount knob" -- the contaminated prior is the true generative
+  prior, NLL learns the Bayes-optimal posterior under it, and the uniform floor
+  keeps that posterior from ever fully committing to a confident-but-wrong
+  location; the override strength is data-dependent, not constant. ε must be fixed
+  (and not in the token) for this to be robust-Bayes rather than an averaged
+  hyperprior. The plot-only `mixture_logprior_on_grid` stays local to `bo1d.py`.
+  The diagnostic makes this visible with three columns: uniform /
+  correct-informative / **wrong-informative**.
 - **Scaling is the real work.** `y_opt` and data `y` are the same physical quantity
-  (function values), so they share one affine: `Y_RANGE` is the full native y
-  range and serves both as the `y_opt` latent `bounds` and as the data-`y` scaling,
-  so the model sees both on one ruler and `y_opt ≤ all y` is legible. `σ_f` is
-  tamed (provisionally `U(0.1, 0.5)`) so the bump above the optimum stays near the
-  `[-1, 1]` convention. All scale numbers are provisional and expected to change
-  after the first histogram check.
+  (function values), so they share one affine, written explicitly as
+  `scale_y(y) = encode_value(y_opt_var, y)` over a **frozen** module constant
+  `Y_RANGE` (frozen for checkpoint compatibility; not a CLI arg). `Y_RANGE` covers
+  the full native y range and is both the `y_opt` bounds and the data-`y` scaling,
+  so the model sees both on one ruler and `y_opt ≤ all y` is legible. Corrected
+  budget: away from `x_opt`, `|g_c − d| ≈ |g| + |d|`, so the natural depth `|d|`
+  inflates the *whole* function height (not just the dip) -- hence the `|d|` cap and
+  a tamed `σ_f`. All scale numbers are provisional; the first implementation step
+  is a histogram check that token values sit ~`[-1, 1]` and that the drawn-`x_opt`
+  marginal matches the contaminated prior. Stochastic tails outside `[-1, 1]` are
+  accepted (soft convention).
+- **Observation noise + reveal.** Data `y` carry small Gaussian noise
+  (`--sigma-obs`), matching the continuous MDN and BO realism. Reveals use the
+  gaussian/sir pattern (replace a finite-spread PRIOR token with a zero-spread
+  known one, token stays active), required so `conditional_log_density` finds an
+  active PRIOR slot.
 - **No BO loop.** No iterative acquisition rollout; the conditional
-  `p(x_opt | y_opt = v, D)` is shown to gesture at Thompson sampling, nothing more.
+  `p(x_opt | y_opt = v, D)` is shown (via `conditional_log_density`, no
+  `sample_ar`) to gesture at Thompson sampling, nothing more.
 - **Scope note.** This is example #4; "nano ships exactly two" (initial design) is
   already stretched by SIR. BO earns its place: it adds instance-level latents, the
   optimum-posterior headline, and the robust prior-injection mechanism, none of
