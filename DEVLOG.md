@@ -89,9 +89,13 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
     the ≥2-pin OOD trigger in the playground (`PIN_OOD_MIN` in
     `playground/src/config.ts` and the pin branch of `oodReasons` in
     `playground/src/gp/demo.ts`).
-  - **Status (2026-06-07):** DGP decided (above); samplers not yet changed and
-    training not run. The 12:52 GP retrain was a better *single-reveal* checkpoint,
-    not this.
+  - **Status (2026-06-07):** DGP decided *and implemented* — `sample_reveal_mask`
+    in `ace.py`, wired into `sample_gp_batch` / `sample_toy_batch`, default
+    `--latent-context-prob` (P(reveal any)) bumped to 0.5; both samplers smoke-train.
+    **Training not yet run**, so current checkpoints are still single-reveal: the
+    playground ≥2-pin OOD banner stays until a multi-reveal checkpoint is trained,
+    re-exported, and its fixtures regenerated. (The 12:52 GP retrain was an earlier
+    single-reveal checkpoint, unrelated.)
 
 ---
 

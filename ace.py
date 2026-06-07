@@ -121,6 +121,36 @@ def decode_token_values(variables: Sequence[Variable], var_id: torch.Tensor, val
     return out
 
 
+def sample_reveal_mask(
+    n_latents: int,
+    batch_size: int,
+    q: float,
+    device: torch.device | str,
+) -> torch.Tensor:
+    """Sample which latents are revealed as context per task: `bool[batch, n_latents]`.
+
+    Reveal/conditioning DGP shared by the example samplers: with probability `q` a
+    task reveals *nothing* (pure inference / pure-prior); otherwise it reveals a
+    uniform random *non-empty* subset of the latents. This keeps the headline
+    0-reveal case well represented while covering every multi-reveal combination,
+    so conditioning on any subset of latents is in-distribution.
+
+    Examples interpret a revealed latent per their own convention (e.g. an exact
+    zero-spread token); a non-revealed latent is queried.
+    """
+
+    if not 0.0 <= q <= 1.0:
+        raise ValueError(f"reveal q must be in [0, 1], got {q}")
+    reveal_any = torch.rand(batch_size, device=device) >= q  # P(reveal any) = 1 - q
+    # Revealing tasks pick a subset uniformly over the 2^L - 1 non-empty subsets,
+    # encoded as an integer in [1, 2^L - 1] and decoded to a per-latent bitmask.
+    n_subsets = (1 << n_latents) - 1
+    codes = torch.randint(1, n_subsets + 1, (batch_size,), device=device)
+    bits = (1 << torch.arange(n_latents, device=device))
+    mask = (codes[:, None] & bits[None, :]) > 0
+    return mask & reveal_any[:, None]
+
+
 @dataclass
 class Tokens:
     """Padded token set.
