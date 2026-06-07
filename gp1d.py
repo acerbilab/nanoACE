@@ -215,10 +215,11 @@ def sample_gp_batch(
 
     n_ctx = torch.randint(min_context, max_context + 1, (batch_size,), device=device)
     ar = torch.arange(max_context, device=device)[None, :]
-    # Reveal a uniform random non-empty subset of the three latents with prob
-    # latent_context_prob, else reveal none. Revealed latents are exact context
-    # tokens (continuous -> zero-spread PRIOR, kernel -> VALUE label); the rest
-    # are queried. See DEVLOG "multi-latent reveal".
+    # Reveal a subset of the three latents as exact context via the shared mixture
+    # DGP (sample_reveal_mask: prob q reveal nothing, else mixed uniform-subset /
+    # uniform-count). Revealed latents are exact context tokens (continuous ->
+    # zero-spread PRIOR, kernel -> VALUE label); the rest are queried. See
+    # ace.sample_reveal_mask and DEVLOG "shared reveal strategy".
     reveal_mask = sample_reveal_mask(3, batch_size, q=1.0 - latent_context_prob, device=device)
     reveal_ell = reveal_mask[:, 0]
     reveal_scale = reveal_mask[:, 1]
@@ -680,7 +681,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--latent-weight", type=float, default=2.0)
     p.add_argument("--latent-context-prob", type=float, default=0.5,
-                   help="P(reveal any latents) per task; revealed = uniform random non-empty subset")
+                   help="P(reveal any latents) per task; the revealed subset uses the shared mixture DGP")
     p.add_argument("--jitter", type=float, default=1e-5)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--plot-path", default="artifacts/gp1d.png")

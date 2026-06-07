@@ -129,11 +129,19 @@ def sample_reveal_mask(
 ) -> torch.Tensor:
     """Sample which latents are revealed as context per task: `bool[batch, n_latents]`.
 
-    Reveal/conditioning DGP shared by the example samplers: with probability `q` a
-    task reveals *nothing* (pure inference / pure-prior); otherwise it reveals a
-    uniform random *non-empty* subset of the latents. This keeps the headline
-    0-reveal case well represented while covering every multi-reveal combination,
-    so conditioning on any subset of latents is in-distribution.
+    Shared reveal/conditioning DGP for the example samplers. Per task:
+
+    - with probability `q`, reveal *nothing* (pure inference / pure-prior);
+    - otherwise split the revealing mass evenly between two schemes:
+      - **uniform over subsets**: a uniform random non-empty subset of the latents
+        (every specific reveal pattern equally likely);
+      - **uniform over count**: a count `k` drawn uniformly from `1..n_latents`,
+        then a uniform random size-`k` subset (every reveal *count* equally likely).
+
+    The mixture keeps the headline 0-reveal case well represented (mass `q`), gives
+    every specific subset a fair floor via the first scheme, and keeps the extremes
+    (notably revealing *all* latents) from being starved as `n_latents` grows via
+    the second. Conditioning on any subset of latents is therefore in-distribution.
 
     Examples interpret a revealed latent per their own convention (e.g. an exact
     zero-spread token); a non-revealed latent is queried.
@@ -143,13 +151,23 @@ def sample_reveal_mask(
         raise ValueError(f"reveal q must be in [0, 1], got {q}")
     if not 1 <= n_latents <= 62:
         raise ValueError("n_latents must be in [1, 62] for int64 bitmask sampling")
+
     reveal_any = torch.rand(batch_size, device=device) >= q  # P(reveal any) = 1 - q
-    # Revealing tasks pick a subset uniformly over the 2^L - 1 non-empty subsets,
-    # encoded as an integer in [1, 2^L - 1] and decoded to a per-latent bitmask.
+
+    # Scheme A: uniform over the 2^L - 1 non-empty subsets, via an integer bitmask.
     n_subsets = (1 << n_latents) - 1
     codes = torch.randint(1, n_subsets + 1, (batch_size,), device=device)
-    bits = (1 << torch.arange(n_latents, device=device))
-    mask = (codes[:, None] & bits[None, :]) > 0
+    bits = 1 << torch.arange(n_latents, device=device)
+    subset_mask = (codes[:, None] & bits[None, :]) > 0
+
+    # Scheme B: count k uniform in 1..L, then a uniform random size-k subset. Random
+    # scores give a uniform permutation; the k lowest-ranked latents are revealed.
+    k = torch.randint(1, n_latents + 1, (batch_size,), device=device)
+    ranks = torch.rand(batch_size, n_latents, device=device).argsort(dim=1).argsort(dim=1)
+    count_mask = ranks < k[:, None]
+
+    use_count = torch.rand(batch_size, device=device) < 0.5
+    mask = torch.where(use_count[:, None], count_mask, subset_mask)
     return mask & reveal_any[:, None]
 
 

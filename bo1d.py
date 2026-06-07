@@ -8,8 +8,8 @@ prior-injection BO, ACEP-TS). It is a mix of the existing examples:
 - the two latents are properties of the *specific sampled function* (unlike
   `gp1d.py`, whose kernel/hyperparameters describe the function class);
 - GP function sampling + sampled kernel/hyperparameters come from `gp1d.py`;
-- runtime Beta prior tokens, the reveal mechanism, and observation noise come
-  from `gaussian_toy.py` / `sbi_sir.py`.
+- runtime Beta prior tokens and observation noise come from `gaussian_toy.py` /
+  `sbi_sir.py`; the latent reveal mechanism is the shared `ace.sample_reveal_mask`.
 
 Data-generating process (adapted from Appendix C.3.1, 1D): sample
 kernel/lengthscale/output-scale (nuisance, not predicted); draw `x_opt` and
@@ -38,7 +38,7 @@ from pathlib import Path
 
 import torch
 
-from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value
+from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value, sample_reveal_mask
 from ace_prior import (
     beta_logprior_on_grid,
     known_latent_features,
@@ -396,9 +396,9 @@ def sample_bo_batch(
 
     n_ctx = torch.randint(min_context, max_context + 1, (batch_size,), device=device)
     ar = torch.arange(max_context, device=device)[None, :]
-    reveal = torch.rand(batch_size, device=device) < latent_context_prob
-    reveal_x = reveal & (torch.rand(batch_size, device=device) < 0.5)
-    reveal_y = reveal & ~reveal_x
+    reveal_mask = sample_reveal_mask(2, batch_size, q=1.0 - latent_context_prob, device=device)
+    reveal_x = reveal_mask[:, 0]
+    reveal_y = reveal_mask[:, 1]
 
     ctx_t = max_context + 2
     x_pos, y_pos = max_context, max_context + 1
@@ -833,7 +833,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--components", type=int, default=12)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--latent-weight", type=float, default=2.0)
-    p.add_argument("--latent-context-prob", type=float, default=0.20)
+    p.add_argument("--latent-context-prob", type=float, default=0.5,
+                   help="P(reveal any latents) per task; the revealed subset uses the shared mixture DGP")
     p.add_argument("--prior-uniform-mix", type=float, default=0.05, help="epsilon for the contaminated prior")
     p.add_argument("--sigma-obs", type=float, default=0.02)
     p.add_argument("--sigma-f-max", type=float, default=0.5)

@@ -76,7 +76,7 @@ def sample_toy_batch(
     min_context: int,
     data_targets: int,
     device: torch.device | str,
-    latent_context_prob: float = 0.0,
+    latent_context_prob: float,
 ) -> ToyBatch:
     """Generate one online training/eval batch."""
 
@@ -92,10 +92,11 @@ def sample_toy_batch(
     y = mu[:, None] + sigma[:, None] * torch.randn(batch_size, total_y, device=device)
     n_ctx = torch.randint(min_context, max_context + 1, (batch_size,), device=device)
     ar = torch.arange(max_context, device=device)[None, :]
-    # Reveal a uniform random non-empty subset of {mu, log_sigma} with prob
-    # latent_context_prob, else reveal none. A revealed latent collapses its
-    # always-present Beta prior token to a zero-spread exact value; a non-revealed
-    # latent keeps its Beta prior and is queried. See DEVLOG "multi-latent reveal".
+    # Reveal a subset of {mu, log_sigma} as exact context via the shared mixture DGP
+    # (sample_reveal_mask: prob q reveal nothing, else mixed uniform-subset /
+    # uniform-count). A revealed latent collapses its always-present Beta prior token
+    # to a zero-spread exact value; a non-revealed latent keeps its Beta prior and is
+    # queried. See ace.sample_reveal_mask and DEVLOG "shared reveal strategy".
     reveal_mask = sample_reveal_mask(2, batch_size, q=1.0 - latent_context_prob, device=device)
     reveal_mu = reveal_mask[:, 0]
     reveal_logsig = reveal_mask[:, 1]
@@ -522,7 +523,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--latent-weight", type=float, default=2.0)
     p.add_argument("--latent-context-prob", type=float, default=0.5,
-                   help="P(reveal any latents) per task; revealed = uniform random non-empty subset")
+                   help="P(reveal any latents) per task; the revealed subset uses the shared mixture DGP")
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--plot-path", default="artifacts/gaussian_toy.png")
     p.add_argument("--no-plot", action="store_true")

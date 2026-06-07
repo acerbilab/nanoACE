@@ -9,6 +9,50 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-07 — Single shared multi-latent reveal strategy (mixture DGP)
+
+All four examples now decide *how many* latents are revealed as context through one
+helper, `ace.sample_reveal_mask`, under a single mixture. Per task:
+
+- with probability `q`, reveal **nothing** (pure inference / pure-prior — the headline);
+- otherwise split the revealing mass 50/50 between **uniform over subsets** (a uniform
+  random non-empty subset) and **uniform over count** (count `k` uniform in `1..L`, then
+  a uniform random size-`k` subset).
+
+Resulting count distribution (`q = 1 - latent_context_prob`, default `q = 0.5`):
+L=2 → `{0:.50, 1:.29, 2:.21}`; L=3 → `{0:.50, 1:.19, 2:.19, 3:.12}` (verified empirically).
+
+- **Why a mixture, not one scheme.** Uniform-over-subsets is fair to every *specific*
+  pin pattern but starves the extremes (revealing *all* L latents is `1/(2^L-1)` of the
+  reveal mass — only ~0.07 at L=3). Uniform-over-count keeps every *count* (incl.
+  all-revealed) well represented but over-weights the lone all-revealed subset. The
+  50/50 blend keeps the per-subset floor while lifting "pin everything" (GP all-3 goes
+  from ~0.07 to ~0.12 of total mass), which matters for the playground's "pin an
+  arbitrary subset and predict" interaction. The `q` knob keeps the 0-reveal headline
+  explicit and L-independent.
+- **All four examples unified.** `gaussian_toy.py` and `gp1d.py` already used the helper
+  (they inherit the new internals). `sbi_sir.py` and `bo1d.py` were migrated off their
+  private `xor` single-reveal logic (which revealed *exactly one* latent, never both) to
+  `sample_reveal_mask(2, …)`. Two-pin SIR / BO contexts are now in-distribution. The
+  `--latent-context-prob` default is standardized to **0.5** across all four (was 0.20
+  for SIR/bo1d), matching the agreed "½ reveal nothing".
+- **Reveal-all is safe.** SIR and bo1d build targets as `[latent, latent, data…]` with
+  the data-`y` columns always active, so a both-revealed row still predicts data (the
+  forward/simulate direction) — no empty-target row. Gaussian/GP already allowed
+  reveal-all under the old scheme.
+- **Checkpoints + playground blobs are PENDING a retrain (follow-up).** This change edits
+  only the DGP code; the shipped `artifacts/gaussian_toy.pt` / `artifacts/gp1d.pt` and the
+  playground blobs/fixtures were trained under the *old* uniform-subset DGP. Nothing breaks
+  (multi-pin was already in-distribution), but they do not yet match this documented DGP.
+  Retraining Gaussian (30k) + GP (100k), re-exporting the playground weights, and
+  regenerating parity fixtures (run export + parity together — see the staleness gotcha) is
+  the tracked follow-up.
+- **Eventual:** `sbi_sir.py` / `bo1d.py` have no committed checkpoint today; training real
+  SIR/BO checkpoints under this DGP is wanted eventually (not done here). Full plan:
+  [PLAN-shared-reveal-strategy.md](PLAN-shared-reveal-strategy.md).
+
+---
+
 ## 2026-06-07 — 1D Bayesian optimization example (`bo1d.py`)
 
 Full design in [PLAN-bo1d.md](PLAN-bo1d.md). Status: **built and run**. The plan
@@ -266,17 +310,11 @@ the revised plan (see PLAN-bo1d.md "Review notes").
 - **Deferred.** No discrete-latent runtime prior token (still deferred from the prior
   redesign). The SIR AR two-latent joint heatmap is computed-capable but not plotted, to
   keep the uniform-vs-informative contrast legible; the marginals carry the story.
-- **TODO — migrate SIR to the shared multi-reveal DGP (`sample_reveal_mask`).** `sbi_sir.py`
-  predates the multi-latent reveal work (it landed on a branch that split before it), so its
-  sampler still uses the old single-reveal logic: with prob `latent_context_prob` it reveals
-  *exactly one* of `beta`/`gamma` (`reveal_beta` xor `reveal_gamma`), never both. It runs fine
-  as-is and the current diagnostic doesn't pin latents, so nothing is broken. But it means a
-  two-pin SIR context (both `beta` and `gamma` revealed) is out-of-distribution, unlike Gaussian
-  and GP-1D. Follow-up for consistency: replace the xor with `sample_reveal_mask(2, batch, q=1
-  - latent_context_prob, device)` (the same swap done in `sample_toy_batch` / `sample_gp_batch`),
-  then retrain the SIR checkpoint so exact multi-pin conditioning is in-distribution and all
-  three examples share one reveal helper. Not required until SIR grows an interactive/pinning
-  demo.
+- **Multi-reveal migration (DONE 2026-06-07).** `sbi_sir.py` (and `bo1d.py`) were migrated
+  off the single-reveal `xor` onto the shared `sample_reveal_mask`, so two-pin contexts are
+  now in-distribution and all four examples share one reveal helper. See the "Single shared
+  multi-latent reveal strategy" entry above. (A real SIR/BO checkpoint under the new DGP
+  remains a tracked follow-up; none is committed today.)
 
 ---
 

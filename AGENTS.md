@@ -115,10 +115,14 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   SIR emit finite-spread Beta information tokens (ACEP); GP-1D emits no finite-spread
   priors, only zero-spread tokens when a continuous latent is revealed. The shared Beta
   prior-token helpers live in `ace_prior.py`.
-- **Latent reveal uses uniform non-empty subsets.** `sample_reveal_mask` in `ace.py`
-  chooses no reveal with probability `q`; otherwise it samples a uniform non-empty
-  subset of the task latents. Gaussian and GP-1D are both trained under this multi-reveal
-  DGP, so exact multi-pin conditioning in the playground is in-distribution.
+- **Latent reveal uses a shared mixture DGP.** `sample_reveal_mask` in `ace.py` picks no
+  reveal with probability `q`; otherwise it splits 50/50 between a uniform non-empty subset
+  and a uniform count (`k` in `1..L`) then a uniform size-`k` subset. All four examples
+  (`gaussian_toy`, `gp1d`, `sbi_sir`, `bo1d`) share it via `latent_context_prob`
+  (= P(reveal anything), default 0.5), so conditioning on any subset of latents — including
+  multi-pin — is in-distribution. Note: the shipped Gaussian/GP checkpoints + playground
+  blobs are pending a retrain under this DGP (see DEVLOG "Single shared multi-latent reveal
+  strategy").
 - **Data values remain task-scaled.** Data values should generally be scaled around
   `[-1, 1]` at generation time. This is a soft convention, not clipping: Gaussian and
   GP samples can have stochastic tails outside that range, which may matter when reading

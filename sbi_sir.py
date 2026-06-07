@@ -30,7 +30,7 @@ from pathlib import Path
 
 import torch
 
-from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value
+from ace import ACE, ACEConfig, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value, sample_reveal_mask
 from ace_prior import beta_logprior_on_grid, draw_from_beta, known_latent_features, prior_features, sample_prior_params
 from diagnostics import normalized_moments, query_log_density
 
@@ -254,8 +254,10 @@ def sample_sir_batch(
     Each element observes the epidemic at the fixed `T_OBS` evenly spaced times,
     then a random permutation splits those points into context and data targets
     (so the split is varied, like the random GP locations in `gp1d.py`). Both
-    rate latents always appear in context as Beta PRIOR tokens; with probability
-    `latent_context_prob` one is revealed as a zero-spread (known) token.
+    rate latents always appear in context as Beta PRIOR tokens; the shared mixture DGP
+    (`sample_reveal_mask`, P(reveal anything) = `latent_context_prob`) reveals a subset
+    of them as zero-spread (known) tokens; non-revealed latents keep their Beta prior
+    and are queried.
     """
 
     if max_context + data_targets > T_OBS:
@@ -289,9 +291,9 @@ def sample_sir_batch(
 
     n_ctx = torch.randint(min_context, max_context + 1, (batch_size,), device=device)
     ar = torch.arange(max_context, device=device)[None, :]
-    reveal = torch.rand(batch_size, device=device) < latent_context_prob
-    reveal_beta = reveal & (torch.rand(batch_size, device=device) < 0.5)
-    reveal_gamma = reveal & ~reveal_beta
+    reveal_mask = sample_reveal_mask(2, batch_size, q=1.0 - latent_context_prob, device=device)
+    reveal_beta = reveal_mask[:, 0]
+    reveal_gamma = reveal_mask[:, 1]
 
     ctx_t = max_context + 2
     beta_pos, gamma_pos = max_context, max_context + 1
@@ -725,7 +727,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--components", type=int, default=8)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--latent-weight", type=float, default=2.0)
-    p.add_argument("--latent-context-prob", type=float, default=0.20)
+    p.add_argument("--latent-context-prob", type=float, default=0.5,
+                   help="P(reveal any latents) per task; the revealed subset uses the shared mixture DGP")
     p.add_argument("--sigma-obs", type=float, default=SIGMA_OBS)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--plot-path", default="artifacts/sbi_sir.png")
