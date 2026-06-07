@@ -1,40 +1,44 @@
 # Plan: 1D Bayesian optimization example (`bo1d.py`)
 
 Created: 2026-06-07
-Updated: 2026-06-07 (revised after a two-reviewer pass; then built and run)
-Status: COMPLETE (working; diagnostic effect is modest, loose tuning remains)
+Updated: 2026-06-07 (revised after a two-reviewer pass; then built, run, enlarged)
+Status: COMPLETE (code working & validated end-to-end; quality is a GPU-training job)
 
 ## Status
 
 Implemented: `ace_prior.sample_contaminated`; `bo1d.py` (schema, DGP, training,
 fixed three-prior diagnostic, plot, checkpoint helpers, `--scale-check`). Docs in
-`README.md` and `AGENTS.md`.
+`README.md` and `AGENTS.md`. Default network: `d_model=192`, **6 transformer
+blocks**, 16 heads, mlp 384, `K=12` (~3.9M params); default contamination
+`ε=0.05`.
 
 Validated by running (CPU, torch 2.12.0 in a local venv):
 
 - `--scale-check`: data token values sit in `[-1, 1]` with ~0.5% stochastic-tail
-  spill; the ε floor leaves ~ε/2 mass in the wrong half of a confident prior. This
-  matches the pure-Python Monte-Carlo estimate done first (~0.3% spill).
-- 12k-step CPU run, fixed diagnostic (truth `x_opt=0.40`, `y_opt=-0.60`):
-  - uniform prior: `x_opt` mean 0.70, std 0.149 (data alone is pulled toward the
-    lowest *observed* point at x≈0.7, since the true optimum sits unobserved
-    between context points -- a feature of the chosen case, not a bug);
-  - correct prior: `x_opt` mean 0.60, std 0.127 (tightens and shifts toward truth);
-  - wrong prior (mass at native ≈ -0.64): `x_opt` mean 0.59, std 0.189 -- the
-    posterior stays near the data instead of collapsing onto the wrong prior, and
-    widens (hedging). The ε floor resists the wrong prior, as designed.
-  - `y_opt` is well recovered (mean ≈ -0.50, std ≈ 0.08).
+  spill; the ε floor leaves ~ε/2 mass in the wrong half of a confident prior.
+  Matches the pure-Python Monte-Carlo done first.
+- The full train → fixed three-prior diagnostic → plot path runs end to end and
+  the structural behavior is in the right direction (correct prior tightens and
+  shifts `p(x_opt | D)` toward truth; wrong prior is resisted; `y_opt` recovered).
 
-So the structural checks pass: uniform→correct tightens/shifts toward truth, and
-correct→wrong is resisted. The effect is **directionally correct but modest** (the
-correct prior moves the mean 0.70→0.60, not all the way to 0.40) -- partly the
-deliberately hard fixed case, partly that ε=0.1 caps prior influence. Consistent
-with the project's loose-verification ethos.
+**Training budget is the real limitation, not architecture or ε.** The paper
+trained 1D-BO for `5e5` steps; on CPU we can only afford ~1e4. At that budget the
+small earlier model (~1.2M, 12k steps) actually showed the prior pull *better*
+(correct prior: mean 0.70→0.60 toward truth 0.40) than the larger 6-block model
+(~3.9M, 15k steps: 0.75→0.66, priors weakly used) -- the bigger model is simply
+more undertrained at equal steps. So the committed CPU artifact is a smoke test,
+not a quality result, and the ε=0.05-vs-0.10 question is deferred until a proper
+run can judge it.
 
-**Optional follow-up tuning** (not blocking): sharpen the correct-prior contrast
-via more steps, a less-misleading fixed case, a stronger correct prior, or a
-smaller ε; longer GPU training for a higher-quality retained artifact. The CPU
-loss is noisy across online batches (≈ -1.4 at 12k) and could be cosine-annealed.
+**Real training is a GPU job** (decision: keep the faithful 6-block default and
+run it on the workstation GPU):
+
+```
+python bo1d.py --steps 500000 --batch-size 64 --save-checkpoint artifacts/bo1d.pt
+```
+
+Consider cosine-annealed LR (the paper used `5e-4` with annealing) for a long run;
+not wired in (constant `--lr 3e-4`), an easy follow-up if needed.
 
 ## Summary
 

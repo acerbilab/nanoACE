@@ -113,7 +113,12 @@ the revised plan (see PLAN-bo1d.md "Review notes").
   deliberately (the 4-block default underfit the prior-integration); `K` is raised
   from 8 to 12 for the multimodal location posterior. Still well short of the
   paper's `5e5`-step budget -- CPU validation runs are necessarily undertrained;
-  real training is a GPU run.
+  real training is a GPU run. Observed at equal small CPU budgets the ~1.2M / 4-block
+  model used the runtime prior *more* than the ~3.9M / 6-block one (the bigger model
+  is more undertrained at equal steps), which confirms the bottleneck is training
+  budget, not capacity. The committed CPU artifact is therefore a smoke test, not a
+  quality result; the `ε=0.05`-vs-`0.10` choice is likewise deferred to a proper
+  GPU run. Defaults kept faithful (6 blocks, `ε=0.05`) for that run.
 - **Scope note.** This is example #4; "nano ships exactly two" (initial design) is
   already stretched by SIR. BO earns its place: it adds instance-level latents, the
   optimum-posterior headline, and the robust prior-injection mechanism, none of
