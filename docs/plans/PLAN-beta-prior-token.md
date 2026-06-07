@@ -1,12 +1,23 @@
 # Plan: bounded latent coordinates + Beta information tokens
 
 Created: 2026-06-07
-Status: COMPLETE
+Status: COMPLETE (historical implementation plan)
 
 ## Completion Notes
-Implemented on 2026-06-07. Verification used short training runs and
-checkpoint reloads; longer convergence tuning and high-quality retained
-artifacts remain ordinary follow-up work, not part of this schema migration.
+Implemented on 2026-06-07. This plan records the schema migration that landed
+bounded continuous-latent coordinates, two-feature information tokens, native
+prediction helpers, Gaussian ACEP, and GP-1D compatibility.
+
+Current source of truth is the code plus `DEVLOG.md`. Artifact freshness has
+since been superseded by the later shared-reveal DGP work: any Gaussian/GP
+artifact regeneration mentioned below is historical for this schema migration,
+while the current retrain/export status lives in `DEVLOG.md` under "Single
+shared multi-latent reveal strategy".
+
+Later examples reuse the same representation: `sbi_sir.py` and `bo1d.py` emit
+finite-spread Beta information tokens for their bounded continuous latents, while
+`gp1d.py` remains finite-prior-free and uses only zero-spread known-latent
+tokens for continuous latent reveals.
 
 ## Summary
 Replace the histogram prior encoder with a compact continuous-latent information
@@ -29,8 +40,8 @@ latents.
   observations; Gaussian ACEP integration; semantic diagnostics and GP-1D
   updates for the new latent-coordinate representation; docs (`DEVLOG.md`,
   `AGENTS.md`, `README.md`, `ace.py` docstrings); explicit native-coordinate
-  prediction helpers; short verification runs; regenerated Gaussian and GP
-  artifacts.
+  prediction helpers; short verification runs; then-current Gaussian and GP
+  artifact regeneration for the schema migration.
 - **Out of scope**:
   - Exact bounded-output distributions. The MDN still predicts on `[-1, 1]` and
     may place small Gaussian-mixture mass outside that interval.
@@ -198,10 +209,12 @@ that depends on variable type and bounds.
   It only emits zero-spread PRIOR tokens when a continuous latent is revealed.
   The default latent prior is learned from the training distribution over the
   declared bounds.
-- **Gaussian is ACEP**: Gaussian always emits one information token per
+- **ACEP examples**: Gaussian always emits one information token per
   continuous latent. For `mu` and `log_sigma`, that token is finite-spread prior
   information by default; if the latent is revealed, the same slot is replaced
-  by a zero-spread exact-value token.
+  by a zero-spread exact-value token. Later SIR and BO examples use the same
+  finite-spread Beta information-token representation for their bounded
+  continuous latents.
 - **Spread feature**: the second prior feature is internal-coordinate standard
   deviation, not `log nu`. `log nu` may be used when sampling hyperpriors, but it
   is not passed to ACE.
@@ -478,7 +491,8 @@ coordinates.
 - Mark the old prior-redesign entry as resolved by this implementation.
 - `AGENTS.md`: update architecture bullets and gotchas.
 - `README.md`: update current status and `Tokens` schema.
-- `PLAN-beta-prior-token.md`: mark phases as complete as work lands.
+- `PLAN-beta-prior-token.md`: mark phases as complete as work lands. The file
+  now lives under `docs/plans/` as a historical development artifact.
 
 **Verification**:
 - [x] Grep docs for stale `prior_bins`/histogram claims; only historical DEVLOG
@@ -487,6 +501,11 @@ coordinates.
 
 ### Phase 7: Artifacts and Final Checks
 **Goal**: leave the repo runnable end to end.
+
+**Current note**: this phase describes the artifact state at the end of the
+Beta-token schema migration. Later shared-reveal DGP work changed the training
+distribution and made the current Gaussian/GP retrain/export status a separate
+follow-up tracked in `DEVLOG.md`.
 
 **Work**:
 - Treat all existing checkpoints as stale after the schema change.

@@ -120,9 +120,9 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   and a uniform count (`k` in `1..L`) then a uniform size-`k` subset. All four examples
   (`gaussian_toy`, `gp1d`, `sbi_sir`, `bo1d`) share it via `latent_context_prob`
   (= P(reveal anything), default 0.5), so conditioning on any subset of latents — including
-  multi-pin — is in-distribution. Note: the shipped Gaussian/GP checkpoints + playground
-  blobs are pending a retrain under this DGP (see DEVLOG "Single shared multi-latent reveal
-  strategy").
+  multi-pin — is in-distribution. Note: Gaussian has been retrained + re-exported under this
+  DGP; the GP-1D checkpoint + playground blob are still pending a retrain (see DEVLOG "Single
+  shared multi-latent reveal strategy").
 - **Data values remain task-scaled.** Data values should generally be scaled around
   `[-1, 1]` at generation time. This is a soft convention, not clipping: Gaussian and
   GP samples can have stochastic tails outside that range, which may matter when reading
@@ -144,7 +144,8 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   but not yet built.
 - **`playground/` is a non-core example, not part of the core.** It is a Vite + TypeScript
   in-browser demo that reimplements `ace.py`'s forward pass in TS (parity-tested against
-  the PyTorch model) so trained checkpoints run client-side. The core stays torch-only and
-  legible; do not let the JS toolchain or web concerns bleed into `ace.py` or the examples.
+  the PyTorch model) so trained checkpoints run client-side. Current tabs cover GP-1D,
+  Gaussian, and SIR. The core stays torch-only and legible; do not let the JS toolchain or
+  web concerns bleed into `ace.py` or the examples.
   Treat it like `temp/` in spirit (separate, optional), but unlike `temp/` it *is* checked
   in and maintained. See `playground/README.md` and the DEVLOG "Web playground" entry.

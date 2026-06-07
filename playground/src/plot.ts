@@ -1,6 +1,6 @@
 /**
  * Tiny canvas plotting helper (no dependencies). `makePlot` wraps a canvas with a
- * data→pixel transform and a handful of drawing primitives shared by both demos.
+ * data→pixel transform and a handful of drawing primitives shared by the demos.
  */
 
 export interface PlotOpts {

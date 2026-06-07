@@ -20,6 +20,7 @@ function setupTabs(): void {
 async function mount(): Promise<void> {
   const gpEl = document.getElementById("gp");
   const gaussianEl = document.getElementById("gaussian");
+  const sirEl = document.getElementById("sir");
   if (gpEl) {
     try {
       const { mountGP } = await import("./gp/demo");
@@ -34,6 +35,14 @@ async function mount(): Promise<void> {
       await mountGaussian(gaussianEl);
     } catch (err) {
       gaussianEl.innerHTML = `<p class="loading">Failed to load Gaussian demo: ${String(err)}</p>`;
+    }
+  }
+  if (sirEl) {
+    try {
+      const { mountSIR } = await import("./sir/demo");
+      await mountSIR(sirEl);
+    } catch (err) {
+      sirEl.innerHTML = `<p class="loading">Failed to load SIR demo: ${String(err)}</p>`;
     }
   }
 }

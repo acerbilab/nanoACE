@@ -24,5 +24,22 @@ export const GAUSSIAN = {
   NU_RANGE: [2, 1000] as [number, number], // Beta concentration slider (log scale)
 };
 
+export const SIR = {
+  T_DOMAIN: [0, 40] as [number, number],
+  Y_VIEW: [-0.04, 0.62] as [number, number],
+  Y_NORMAL: [0, 0.45] as [number, number],
+  Y_OOD: [-0.08, 0.75] as [number, number],
+  MAX_CONTEXT_HINT: 12,
+  MIN_CONTEXT_HINT: 4,
+  BINS: 48, // beta/gamma oracle grid resolution per axis
+  TIME_POINTS: 121,
+  FINE_STEPS: 400,
+  SIGMA_OBS: 0.02,
+  DATA_LOC: 0.2,
+  DATA_SCALE: 0.2,
+  NU_RANGE: [2, 1000] as [number, number], // Beta concentration slider (log scale)
+  HIT_RADIUS_PX: 12,
+};
+
 // Display labels for the discrete kernel latent (order matches gp1d.KERNELS).
 export const KERNEL_LABELS = ["RBF", "Matérn-½", "Matérn-3/2", "Periodic"];

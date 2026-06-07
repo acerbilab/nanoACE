@@ -11,6 +11,8 @@ Usage (from the project venv):
         --checkpoint artifacts/gp1d.pt --out playground/public/models/gp1d
     python playground/export_weights.py --task gaussian \
         --checkpoint artifacts/gaussian_toy.pt --out playground/public/models/gaussian
+    python playground/export_weights.py --task sbi_sir \
+        --checkpoint artifacts/sbi_sir.pt --out playground/public/models/sbi_sir
 
 Outputs `<out>/manifest.json` and `<out>/weights.bin` (float16, little-endian).
 
@@ -38,7 +40,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # Task name -> module providing load_checkpoint(path, device) and variables().
-TASK_MODULES = {"gp1d": "gp1d", "gaussian": "gaussian_toy"}
+TASK_MODULES = {"gp1d": "gp1d", "gaussian": "gaussian_toy", "sbi_sir": "sbi_sir"}
 
 
 def quantize_fp16_inplace(model) -> None:
@@ -49,7 +51,7 @@ def quantize_fp16_inplace(model) -> None:
 
 
 def build_manifest(model, task: str) -> tuple[dict, bytes]:
-    """Return (manifest dict, concatenated float32 little-endian weight bytes)."""
+    """Return (manifest dict, concatenated float16 little-endian weight bytes)."""
 
     cfg = asdict(model.cfg)
     variables = model.variables

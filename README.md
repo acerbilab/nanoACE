@@ -57,8 +57,9 @@ Implemented modules:
 - [diagnostics.py](diagnostics.py): reusable grid-query helpers for marginal and
   two-variable AR diagnostics.
 - [playground/](playground/): a **non-core**, fully in-browser TypeScript demo
-  (separate toolchain) where trained models run client-side — GP-1D and Gaussian,
-  with interactive conditioning, latent pinning, and an analytic oracle overlay.
+  (separate toolchain) where trained models run client-side — GP-1D, Gaussian,
+  and SIR, with interactive conditioning, latent/prior controls, and oracle
+  overlays where practical.
   See [playground/README.md](playground/README.md). The Python core stays
   torch-only; the playground is an example built on a parity-tested TS port of
   `ace.py`'s forward pass.

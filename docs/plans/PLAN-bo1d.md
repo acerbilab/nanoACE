@@ -1,8 +1,8 @@
 # Plan: 1D Bayesian optimization example (`bo1d.py`)
 
 Created: 2026-06-07
-Updated: 2026-06-07 (revised after a two-reviewer pass; then built, run, enlarged)
-Status: COMPLETE (code working & validated end-to-end; quality is a GPU-training job)
+Updated: 2026-06-07 (revised after a two-reviewer pass; built, run, enlarged, then aligned with the shared reveal DGP)
+Status: COMPLETE (historical implementation plan; quality checkpoint is a GPU-training follow-up)
 
 ## Status
 
@@ -26,9 +26,15 @@ trained 1D-BO for `5e5` steps; on CPU we can only afford ~1e4. At that budget th
 small earlier model (~1.2M, 12k steps) actually showed the prior pull *better*
 (correct prior: mean 0.70→0.60 toward truth 0.40) than the larger 6-block model
 (~3.9M, 15k steps: 0.75→0.66, priors weakly used) -- the bigger model is simply
-more undertrained at equal steps. So the committed CPU artifact is a smoke test,
+more undertrained at equal steps. So the local CPU validation artifact is a smoke test,
 not a quality result, and the ε=0.05-vs-0.10 question is deferred until a proper
 run can judge it.
+
+Current source of truth is the code plus `DEVLOG.md`. Since this plan was first
+implemented, the reveal mechanism was standardized across all four examples:
+`bo1d.py` now uses `ace.sample_reveal_mask`, so it can reveal no latent, either
+latent, or both latents. The shared-reveal plan lives in
+`docs/plans/PLAN-shared-reveal-strategy.md`.
 
 **Real training is a GPU job** (decision: keep the faithful 6-block default and
 run it on the workstation GPU):
@@ -122,7 +128,7 @@ paper is inspiration, not a constraint (see DEVLOG).
 `p(x_opt | D)` *can* be multimodal under sparse data (competing basins from the
 `|·|`-folded function), so this example can exercise the MDN's multi-component
 capacity in a way the unimodal Gaussian/SIR posteriors do not. This is a "can",
-not a guarantee, and depends on `mdn_components` (default 8) and convergence;
+not a guarantee, and depends on `mdn_components` (default 12) and convergence;
 since heavy tuning is out of scope, the claim is not load-bearing.
 
 ## Data-generating process (per sample)
@@ -133,7 +139,7 @@ instead of the paper's `U[-5, 5]` offset.
 1. **Nuisance hyperparameters** (not latents): kernel from
    {RBF, Matérn-1/2, Matérn-3/2, Matérn-5/2} with weights `[0.35, 0.1, 0.2, 0.35]`;
    lengthscale `ℓ ~ N(1/3, 0.75)` truncated `[0.05, 2]`; output scale
-   `σ_f ~ U(0.1, σ_f_max)`. `σ_f_max` is tamed (provisionally `0.5`) so the bump
+   `σ_f ~ U(0.1, σ_f_max)`. `σ_f_max` is tamed (default `0.5`) so the bump
    above the optimum stays near the `[-1, 1]` token convention.
 2. **Latents** (truth drawn from the ε-contaminated prior; see below):
    - `x_opt` on `[-1, 1]`.
@@ -141,7 +147,7 @@ instead of the paper's `U[-5, 5]` offset.
      `N = ceil(2 / ℓ)` (≈ uncorrelated samples across the width-2 domain); with
      `p = 0.1` subtract `Exp(1)` (the paper's "unexpectedly low optimum" kick,
      **adapted** -- the paper adds to the mean, we deepen `d`). Then **clamp
-     `d = min(d, 0)`** and cap `|d|` (provisionally `≤ 2.0`) for a consistent dip
+     `d = min(d, 0)`** and cap `|d|` (`≤ 2.0`) for a consistent dip
      and bounded function height (`N = 1` at large `ℓ` otherwise leaves `d`'s sign
      unconstrained, and the `Exp` tail otherwise inflates height -- see Scaling).
    - `y_opt` on `Y_RANGE` (the leveling shift that sets the optimum value).
@@ -181,7 +187,7 @@ context token).
 
 The effective generative prior over each latent is
 `(1 − ε) · Beta(α, β) + ε · Uniform`, a classic ε-contamination / robust-Bayes
-prior. ε is a fixed hyperparameter (provisionally `0.1`), exposed as
+prior. ε is a fixed hyperparameter (default `0.05`), exposed as
 `--prior-uniform-mix`. Applied to **both** latents.
 
 **Why it is needed, and why it is not redundant with `sample_prior_params`.**
@@ -267,9 +273,10 @@ columns jointly constrain behavior. uniform→correct must **tighten** (proves t
 model uses priors -- a prior-ignoring model fails here); correct→wrong must
 **recover** (proves the model does not blindly follow -- a prior-slaved model
 fails here). ε must be small enough that correct priors still help yet large
-enough that wrong priors are recoverable; `ε = 0.1` is the provisional balance.
+enough that wrong priors are recoverable; the implemented default is `ε = 0.05`.
+The `0.05` vs `0.10` choice is deferred to a proper long run.
 
-Plot (provisional layout, mirrors `sbi_sir.plot_diagnostic`'s per-column loop):
+Plot layout mirrors `sbi_sir.plot_diagnostic`'s per-column loop:
 
 - top: the true function, context points, true `(x_opt, y_opt)` marked, ACE
   posterior-predictive band;
@@ -281,15 +288,17 @@ Plot (provisional layout, mirrors `sbi_sir.plot_diagnostic`'s per-column loop):
 
 The conditional needs only `diagnostics.conditional_log_density` (which builds a
 zero-spread PRIOR token for the known latent) -- **no `sample_ar`**. Requirement:
-the model must have *seen* zero-spread `y_opt` tokens, so `latent_context_prob`
-must reveal `y_opt` sometimes.
+the model must have seen zero-spread `y_opt` tokens, which the shared
+`sample_reveal_mask` DGP provides.
 
-**Reveal mechanism**: the gaussian/sir pattern -- with probability
-`latent_context_prob`, *replace* a latent's finite-spread Beta PRIOR token with a
-**zero-spread known** PRIOR token (`known_latent_features`), keeping the token
-**active** and dropping the matching target. This is required for
-`append_or_replace_context_token` / `conditional_log_density` to find an active
-PRIOR slot; it is **not** gp1d's absent-token pattern.
+**Reveal mechanism**: `bo1d.py` uses the shared reveal DGP (`sample_reveal_mask`):
+with probability `latent_context_prob`, reveal some non-empty latent subset under
+the shared mixture; otherwise reveal nothing. A revealed continuous latent
+replaces its finite-spread Beta PRIOR token with a **zero-spread known** PRIOR
+token (`known_latent_features`), keeping the token **active** and dropping the
+matching target. This is required for `append_or_replace_context_token` /
+`conditional_log_density` to find an active PRIOR slot; it is **not** gp1d's
+absent-token pattern.
 
 **Verification recipe** (the grid-oracle convention does not apply): short run
 that completes; the token-scale + contamination-marginal histogram check; and the
@@ -324,11 +333,14 @@ envelope constant, kernel weights, and the `|d|` cap are frozen module constants
   not global minima) -- they drive the wanted multimodality. Optionally assert in
   the fixed diagnostic that the labeled `x_opt` is the dense-grid argmin (it is, by
   construction; cheap belt-and-braces).
-- **Scale numbers are provisional** and expected to change after the histogram
-  check (flagged by the user); `|d|` inflating function height is the main risk.
+- **Scale numbers are validated defaults**, not immutable constants. The
+  histogram/scale check passed with the current values; `|d|` inflating function
+  height remains the main thing to monitor if `sigma_f_max`, `Y_RANGE`, or the
+  depth cap changes.
 - **Wrong-prior recovery is data-dependent**, not guaranteed; the fixed case must
   carry enough context near the true basin for the demo to land, and the
-  correct-column tightening must remain visible at `ε = 0.1`.
+  correct-column tightening must remain visible at the chosen epsilon. Current
+  default is `ε = 0.05`; comparing `0.05` vs `0.10` is deferred to a long run.
 - **Multimodality is a "can", not a must**, and is harder to train than the
   unimodal examples; not load-bearing given tuning is out of scope.
 - **Scope**: this is example #4 with several new sub-mechanisms (ε-contamination,

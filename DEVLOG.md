@@ -40,22 +40,25 @@ L=2 → `{0:.50, 1:.29, 2:.21}`; L=3 → `{0:.50, 1:.19, 2:.19, 3:.12}` (verifie
   the data-`y` columns always active, so a both-revealed row still predicts data (the
   forward/simulate direction) — no empty-target row. Gaussian/GP already allowed
   reveal-all under the old scheme.
-- **Checkpoints + playground blobs are PENDING a retrain (follow-up).** This change edits
-  only the DGP code; the shipped `artifacts/gaussian_toy.pt` / `artifacts/gp1d.pt` and the
-  playground blobs/fixtures were trained under the *old* uniform-subset DGP. Nothing breaks
-  (multi-pin was already in-distribution), but they do not yet match this documented DGP.
-  Retraining Gaussian (30k) + GP (100k), re-exporting the playground weights, and
-  regenerating parity fixtures (run export + parity together — see the staleness gotcha) is
-  the tracked follow-up.
+- **Gaussian retrained under this DGP; GP-1D retrain still PENDING.** This change edited
+  only the DGP code, so the originally shipped checkpoints/blobs/fixtures were trained under
+  the *old* uniform-subset DGP. Gaussian has since been retrained (30k) under the shared
+  mixture DGP, with the playground weights re-exported and the parity/demo fixtures
+  regenerated together — so `artifacts/gaussian_toy.pt`, the Gaussian blob, and
+  `gaussian.{parity,demo}.json` now match this documented DGP (the regenerated Gaussian
+  fixtures are part of the SIR-tab changeset). GP-1D (100k) is the remaining tracked
+  follow-up: `artifacts/gp1d.pt`, its blob, and `gp1d.{parity,demo}.json` are still on the
+  old DGP. Nothing breaks either way (multi-pin was already in-distribution); always re-run
+  export + parity together (see the staleness gotcha).
 - **Eventual:** `sbi_sir.py` / `bo1d.py` have no committed checkpoint today; training real
   SIR/BO checkpoints under this DGP is wanted eventually (not done here). Full plan:
-  [PLAN-shared-reveal-strategy.md](PLAN-shared-reveal-strategy.md).
+  [docs/plans/PLAN-shared-reveal-strategy.md](docs/plans/PLAN-shared-reveal-strategy.md).
 
 ---
 
 ## 2026-06-07 — 1D Bayesian optimization example (`bo1d.py`)
 
-Full design in [PLAN-bo1d.md](PLAN-bo1d.md). Status: **built and run**. The plan
+Full design in [docs/plans/PLAN-bo1d.md](docs/plans/PLAN-bo1d.md). Status: **built and run**. The plan
 was checked by two reviewers, revised, then implemented and validated (CPU run,
 torch 2.12.0). The DGP, training, and three-prior diagnostic work end to end;
 `--scale-check` confirms data token values sit in `[-1, 1]` (~0.5% tail spill).
@@ -63,9 +66,9 @@ The structural checks pass: uniform→correct tightens/shifts `p(x_opt | D)` tow
 truth, and the wrong prior is resisted (posterior stays near the data, not the
 wrong prior, thanks to the ε floor). The effect is directionally correct but
 modest (the chosen fixed case is deliberately hard -- the true optimum sits
-unobserved between context points -- and ε=0.1 caps prior influence); sharpening
+unobserved between context points -- and ε=0.05 caps prior influence); sharpening
 it is optional loose tuning, recorded in the plan's Status. This entry reflects
-the revised plan (see PLAN-bo1d.md "Review notes").
+the revised plan (see `docs/plans/PLAN-bo1d.md` "Review notes").
 
 - **Fourth example: `bo1d.py`.** 1D Bayesian optimization. The two latents are the
   global optimum's **location** `x_opt` and **value** `y_opt`. The headline is that
@@ -110,7 +113,7 @@ the revised plan (see PLAN-bo1d.md "Review notes").
   blindly follow). Recorded here and in `AGENTS.md` as a departure from the oracle
   convention.
 - **ε-contamination ("robust prior").** The effective generative prior is
-  `(1−ε)·Beta + ε·Uniform` (ε≈0.1, a classic robust-Bayes / ε-contamination
+  `(1−ε)·Beta + ε·Uniform` (default ε=0.05, a classic robust-Bayes / ε-contamination
   prior), applied to both latents. **Why it is not redundant with the existing
   `sample_prior_params` mixture:** that helper always draws truth from the *same*
   Beta the token encodes -- the token never lies -- so a model trained on it learns
@@ -137,10 +140,9 @@ the revised plan (see PLAN-bo1d.md "Review notes").
   so the model sees both on one ruler and `y_opt ≤ all y` is legible. Corrected
   budget: away from `x_opt`, `|g_c − d| ≈ |g| + |d|`, so the natural depth `|d|`
   inflates the *whole* function height (not just the dip) -- hence the `|d|` cap and
-  a tamed `σ_f`. All scale numbers are provisional; the first implementation step
-  is a histogram check that token values sit ~`[-1, 1]` and that the drawn-`x_opt`
-  marginal matches the contaminated prior. Stochastic tails outside `[-1, 1]` are
-  accepted (soft convention).
+  a tamed `σ_f`. The scale check passed with the current constants: token values sit
+  near `[-1, 1]` and the drawn-`x_opt` marginal matches the contaminated prior.
+  Stochastic tails outside `[-1, 1]` are accepted (soft convention).
 - **Observation noise + reveal.** Data `y` carry small Gaussian noise
   (`--sigma-obs`), matching the continuous MDN and BO realism. Reveals use the
   gaussian/sir pattern (replace a finite-spread PRIOR token with a zero-spread
@@ -160,7 +162,7 @@ the revised plan (see PLAN-bo1d.md "Review notes").
   real training is a GPU run. Observed at equal small CPU budgets the ~1.2M / 4-block
   model used the runtime prior *more* than the ~3.9M / 6-block one (the bigger model
   is more undertrained at equal steps), which confirms the bottleneck is training
-  budget, not capacity. The committed CPU artifact is therefore a smoke test, not a
+  budget, not capacity. The local CPU validation run is therefore a smoke test, not a
   quality result; the `ε=0.05`-vs-`0.10` choice is likewise deferred to a proper
   GPU run. Defaults kept faithful (6 blocks, `ε=0.05`) for that run.
 - **Scope note.** This is example #4; "nano ships exactly two" (initial design) is
@@ -170,15 +172,37 @@ the revised plan (see PLAN-bo1d.md "Review notes").
 
 ---
 
+## 2026-06-07 — SIR playground tab
+
+- **SIR added to the non-core web playground.** `playground/` now has a third tab for
+  `sbi_sir.py`: editable infected-fraction observations, runtime Beta prior controls for
+  `beta` and `gamma`, ACE predictive curves/marginals, and a live browser-side numerical
+  SIR grid oracle. This stays entirely in the playground toolchain; `ace.py` and the
+  Python SIR example are unchanged.
+- **Oracle is practical in-browser.** Unlike the GP oracle, SIR only needs deterministic
+  RK4 trajectories over a `(beta, gamma)` grid plus Gaussian likelihood scoring. The TS
+  implementation caches the fine-grid trajectories and reuses them as observations and
+  priors change, so the live oracle is cheap enough for the UI.
+- **Export/parity extended.** `playground/export_weights.py` accepts `--task sbi_sir`;
+  `playground/parity.py` now writes SIR parity and demo fixtures; `npm test` covers the
+  SIR forward parity, ACE orchestration, TS oracle, and UI smoke path.
+- **Artifact caveat.** The local `artifacts/sbi_sir.pt` generated during this work is a
+  short CPU smoke checkpoint for wiring/testing, not a quality playground model and not a
+  committed artifact. A proper SIR checkpoint under the shared reveal DGP remains a
+  follow-up, consistent with the shared-reveal entry above.
+
+---
+
 ## 2026-06-07 — Web playground (in-browser TS port)
 
 - **A non-core interactive demo lives in `playground/`.** It is an *example*, not
   part of nanoACE: the core stays torch-only and legible, while `playground/`
   carries a Vite + TypeScript toolchain. It reimplements `ace.py`'s forward pass
-  in TS so trained models run fully client-side (GitHub Pages, no server). Two
-  demos: GP-1D (add/drag points, infer the kernel, **pin a latent and predict**)
-  and Gaussian (Beta-prior sliders + observed `y`, with the analytic oracle
-  overlaid). The headline is that amortized conditioning is instant — a forward
+  in TS so trained models run fully client-side (GitHub Pages, no server). The
+  playground started with GP-1D (add/drag points, infer the kernel, **pin a latent
+  and predict**) and Gaussian (Beta-prior sliders + observed `y`, with the analytic
+  oracle overlaid), and now also includes SIR (see the SIR playground entry above).
+  The headline is that amortized conditioning is instant — a forward
   pass per interaction — which is exactly what an interactive demo makes visible.
 - **The port is a frozen snapshot kept honest by a parity test.** `export_weights.py`
   derives every constant from a live `ACE` instance (no hand re-encoding of the
@@ -211,54 +235,12 @@ the revised plan (see PLAN-bo1d.md "Review notes").
   risks the fetched weights drifting out of sync with the parity-pinned code, the
   one integrity property this design leans on). Regenerate locally via
   `export_weights.py` meanwhile. The Pages deploy is blocked until this resolves.
-- **Multi-latent reveal (DONE 2026-06-07) — playground multi-pin is now in-distribution.**
-  Previously both samplers revealed *at most one* latent as context per example, so
-  pinning two or three latents in the playground was out-of-distribution. The DGP
-  below was implemented and both examples retrained (Gaussian 30k, GP 100k), so
-  multi-pin is now a real conditional and the ≥2-pin OOD banner has been removed.
-  - **Why:** the playground's headline interaction is "pin latents and predict";
-    multi-pin should be a real conditional, not OOD.
-  - **Resolved DGP — the reveal/conditioning distribution (decided 2026-06-07).**
-    The task generators are otherwise unchanged (latent priors/ranges, kernels,
-    function sampling); only how each task chooses revealed-vs-queried latents changes.
-    - **Reveal mask (shared helper, both examples).** Per task: with prob `q` reveal
-      *nothing*; otherwise reveal a **uniform random non-empty subset** of the latents.
-      Implement once, e.g. `sample_reveal_mask(n_latents, batch, q, device) -> bool[B, L]`:
-      `reveal_any ~ Bernoulli(1-q)`; if revealing, sample one integer bitmask uniformly
-      from `1..2^L-1` and decode it to latent booleans, else all-False. Default
-      `q ≈ 0.5`, tunable per example — keeps the headline 0-reveal case at ~half the
-      mass while the rest covers every multi-pin combination.
-    - **Mental model.** Every latent's prior token has a spread running from informative
-      (Beta) → zero (exact). The reveal mask picks *which latents have zero spread (exact)*.
-    - **GP (`gp1d.sample_gp_batch`) — exact-only, stays finite-prior-free.** Drop
-      `reveal_which` (the `randint(0,3)` single pick); use the shared mask. A *revealed*
-      latent enters context as a zero-spread token (continuous → zero-spread `PRIOR`,
-      `kernel` → `VALUE` class label) and is dropped from the target; a *non-revealed*
-      latent has **no** prior token and is queried. The kernel may be revealed together
-      with continuous latents.
-    - **Gaussian (`gaussian_toy.sample_toy_batch`) — keep the always-present Beta priors.**
-      Both latents always carry a runtime Beta prior token (the latent is drawn from it),
-      exactly as today — that is the ACEP demo and is already in-distribution. Replace
-      `reveal_mu` xor `reveal_logsig` with the shared mask: a *revealed* latent collapses
-      its Beta slot to a zero-spread exact token and leaves the target; a *non-revealed*
-      latent keeps its finite Beta prior and is queried. (The current Beta-slider demo
-      needs no retrain; this mainly makes exact multi-"pin" in-distribution and unifies
-      the two samplers under one helper.)
-  - **Follow-up completed after retraining:** re-ran `playground/export_weights.py`
-    for the affected task(s), regenerated fixtures with `playground/parity.py`
-    (they pin the *current* checkpoint — see the fixtures+blob staleness gotcha
-    above), and removed the ≥2-pin OOD trigger in the playground.
-  - **Status (2026-06-07): DONE.** `sample_reveal_mask` in `ace.py`, wired into
-    `sample_gp_batch` / `sample_toy_batch`, default `--latent-context-prob` (P(reveal
-    any)) = 0.5. Both examples retrained under the new DGP (Gaussian 30k, GP 100k),
-    blobs re-exported and fixtures regenerated, and the playground ≥2-pin OOD trigger
-    removed (`PIN_OOD_MIN` deleted from `config.ts`; pin branch dropped from
-    `oodReasons`). Diagnostics still track the oracle (Gaussian μ/log σ ≈ oracle; GP
-    predictive RMSE 0.36 vs oracle 0.345). Note GP is a bit *overconfident* on kernel
-    identity (Periodic 0.81 vs oracle 0.50) — acceptable for the demo, worth a glance
-    if kernel calibration matters later. GP pins-only contexts with no observed data
-    remain flagged OOD in the playground because training used at least four data
-    context points.
+- **Multi-latent reveal follow-up moved to the shared-reveal entry.** This playground
+  section originally tracked making multi-pin conditioning in-distribution for the
+  Gaussian and GP demos, but the current source of truth is the "Single shared
+  multi-latent reveal strategy" entry above. The code now uses the shared mixture DGP
+  across all four examples; the Gaussian checkpoint, blob, and parity fixtures have since
+  been refreshed under that DGP, while the GP-1D ones are still **pending retrain/export**.
 
 ---
 

@@ -27,6 +27,7 @@ import ace  # noqa: E402
 import diagnostics  # noqa: E402
 import gaussian_toy  # noqa: E402
 import gp1d  # noqa: E402
+import sbi_sir  # noqa: E402
 from ace import PRIOR, QUERY, VALUE, Batch, Tokens, encode_value  # noqa: E402
 from export_weights import quantize_fp16_inplace  # noqa: E402  (same dir as this script)
 
@@ -193,6 +194,52 @@ def gaussian_cases(model) -> list[dict]:
     return cases
 
 
+def sir_cases(model) -> list[dict]:
+    cases = []
+    pf = sbi_sir.prior_features
+
+    def prior_vec(mu_unit, nu):
+        return tuple(pf(torch.tensor(float(mu_unit)), torch.tensor(float(nu))).tolist())
+
+    # Case 1: finite-spread Beta priors on beta/gamma + observed infected fractions.
+    ctx = TokenBuilder()
+    for t, y in [(3.0, 0.018), (8.0, 0.043), (14.0, 0.145), (22.0, 0.305)]:
+        ctx.add(0, VALUE, x=float(sbi_sir.scale_time(torch.tensor(t))), value=float(sbi_sir.scale_value(torch.tensor(y))))
+    ctx.add(1, PRIOR, prior=prior_vec(0.60, 12.0))
+    ctx.add(2, PRIOR, prior=prior_vec(0.45, 10.0))
+    tgt = TokenBuilder()
+    tgt.add(1, QUERY, value=enc(model, 1, sbi_sir.EVAL_BETA))
+    tgt.add(2, QUERY, value=enc(model, 2, sbi_sir.EVAL_GAMMA))
+    tgt.add(0, QUERY, x=float(sbi_sir.scale_time(torch.tensor(18.0))), value=float(sbi_sir.scale_value(torch.tensor(0.20))))
+    cases.append(run_case(model, "sir_beta_priors", ctx, tgt))
+
+    # Case 2: beta revealed as zero-spread PRIOR; gamma remains finite-spread.
+    beta_int = enc(model, 1, sbi_sir.EVAL_BETA)
+    ctx = TokenBuilder()
+    for t, y in [(4.0, 0.02), (10.0, 0.07), (16.0, 0.18)]:
+        ctx.add(0, VALUE, x=float(sbi_sir.scale_time(torch.tensor(t))), value=float(sbi_sir.scale_value(torch.tensor(y))))
+    ctx.add(1, PRIOR, value=beta_int, prior=(beta_int, 0.0))
+    ctx.add(2, PRIOR, prior=prior_vec(0.50, 2.0))
+    tgt = TokenBuilder()
+    tgt.add(2, QUERY, value=enc(model, 2, sbi_sir.EVAL_GAMMA))
+    tgt.add(0, QUERY, x=float(sbi_sir.scale_time(torch.tensor(24.0))), value=float(sbi_sir.scale_value(torch.tensor(0.30))))
+    cases.append(run_case(model, "sir_known_beta", ctx, tgt))
+
+    # Case 3: padded data context plus active priors.
+    ctx = TokenBuilder()
+    ctx.add(0, VALUE, x=float(sbi_sir.scale_time(torch.tensor(5.0))), value=float(sbi_sir.scale_value(torch.tensor(0.025))))
+    ctx.add(0, VALUE, x=0.0, value=0.0, mask=False)
+    ctx.add(0, VALUE, x=float(sbi_sir.scale_time(torch.tensor(12.0))), value=float(sbi_sir.scale_value(torch.tensor(0.10))))
+    ctx.add(1, PRIOR, prior=prior_vec(0.50, 2.0))
+    ctx.add(2, PRIOR, prior=prior_vec(0.50, 2.0))
+    tgt = TokenBuilder()
+    tgt.add(1, QUERY, value=enc(model, 1, 0.45))
+    tgt.add(0, QUERY, x=float(sbi_sir.scale_time(torch.tensor(30.0))), value=float(sbi_sir.scale_value(torch.tensor(0.18))))
+    cases.append(run_case(model, "sir_padded_context", ctx, tgt))
+
+    return cases
+
+
 @torch.no_grad()
 def gp_demo_reference(model) -> dict:
     """End-to-end reference for the GP demo's orchestration, using gp1d.py's own
@@ -301,6 +348,51 @@ def gaussian_demo_reference(model) -> dict:
     }
 
 
+@torch.no_grad()
+def sir_demo_reference(model) -> dict:
+    """End-to-end reference for the SIR demo: ACE rate marginals and predictive
+    curve plus the numerical grid oracle on the fixed informative-prior case."""
+
+    device = next(model.parameters()).device
+    bins = 48
+    points = 121
+    toy = sbi_sir.fixed_eval_batch(model.variables, device=device, points=points, prior_kind="informative")
+
+    pred = model(toy.batch)
+    y_mean = sbi_sir.unscale_value(pred.mean(toy.batch.target)[0])
+    y_std = pred.continuous_var()[0].clamp_min(1e-8).sqrt() * sbi_sir.DATA_SCALE
+
+    beta_grid = torch.linspace(sbi_sir.BETA_RANGE[0], sbi_sir.BETA_RANGE[1], bins, device=device)
+    gamma_grid = torch.linspace(sbi_sir.GAMMA_RANGE[0], sbi_sir.GAMMA_RANGE[1], bins, device=device)
+    beta_logp = diagnostics.query_log_density(model, toy.batch, 1, encode_value(model.variables[1], beta_grid))
+    gamma_logp = diagnostics.query_log_density(model, toy.batch, 2, encode_value(model.variables[2], gamma_grid))
+
+    def norm(logp):
+        return (logp - torch.logsumexp(logp, dim=0)).exp().tolist()
+
+    oracle = sbi_sir.sir_oracle(toy, bins=bins, sigma_obs=sbi_sir.SIGMA_OBS)
+
+    return {
+        "t_context": toy.t_context[0].tolist(),
+        "y_context": toy.y_context[0].tolist(),
+        "beta_unit": float(toy.beta_prior_unit[0]),
+        "beta_nu": float(toy.beta_prior_nu[0]),
+        "gamma_unit": float(toy.gamma_prior_unit[0]),
+        "gamma_nu": float(toy.gamma_prior_nu[0]),
+        "t_grid": toy.t_target[0].tolist(),
+        "beta_grid": beta_grid.tolist(),
+        "gamma_grid": gamma_grid.tolist(),
+        "beta_post_ace": norm(beta_logp),
+        "gamma_post_ace": norm(gamma_logp),
+        "y_mean_ace": y_mean.tolist(),
+        "y_std_ace": y_std.tolist(),
+        "beta_post_oracle": oracle.beta_probs.tolist(),
+        "gamma_post_oracle": oracle.gamma_probs.tolist(),
+        "y_mean_oracle": oracle.y_mean.tolist(),
+        "y_std_oracle": oracle.y_std.tolist(),
+    }
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     device = torch.device("cpu")
@@ -322,6 +414,15 @@ def main() -> None:
     print(f"wrote gaussian.parity.json ({len(gau)} cases)")
     (OUT_DIR / "gaussian.demo.json").write_text(json.dumps(gaussian_demo_reference(gauss_model)))
     print("wrote gaussian.demo.json")
+
+    sir_model = sbi_sir.load_checkpoint(str(REPO_ROOT / "artifacts" / "sbi_sir.pt"), device)
+    sir_model.eval()
+    quantize_fp16_inplace(sir_model)  # match the shipped fp16 weights
+    sir = sir_cases(sir_model)
+    (OUT_DIR / "sbi_sir.parity.json").write_text(json.dumps(sir))
+    print(f"wrote sbi_sir.parity.json ({len(sir)} cases)")
+    (OUT_DIR / "sbi_sir.demo.json").write_text(json.dumps(sir_demo_reference(sir_model)))
+    print("wrote sbi_sir.demo.json")
 
 
 if __name__ == "__main__":
