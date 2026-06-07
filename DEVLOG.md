@@ -63,10 +63,10 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
     - **Reveal mask (shared helper, both examples).** Per task: with prob `q` reveal
       *nothing*; otherwise reveal a **uniform random non-empty subset** of the latents.
       Implement once, e.g. `sample_reveal_mask(n_latents, batch, q, device) -> bool[B, L]`:
-      `reveal_any ~ Bernoulli(1-q)`; if revealing, each latent `~ Bernoulli(0.5)` (force
-      one True when the draw is all-False → uniform over non-empty subsets), else
-      all-False. Default `q ≈ 0.5`, tunable per example — keeps the headline 0-reveal
-      case at ~half the mass while the rest covers every multi-pin combination.
+      `reveal_any ~ Bernoulli(1-q)`; if revealing, sample one integer bitmask uniformly
+      from `1..2^L-1` and decode it to latent booleans, else all-False. Default
+      `q ≈ 0.5`, tunable per example — keeps the headline 0-reveal case at ~half the
+      mass while the rest covers every multi-pin combination.
     - **Mental model.** Every latent's prior token has a spread running from informative
       (Beta) → zero (exact). The reveal mask picks *which latents have zero spread (exact)*.
     - **GP (`gp1d.sample_gp_batch`) — exact-only, stays finite-prior-free.** Drop
@@ -83,12 +83,10 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
       latent keeps its finite Beta prior and is queried. (The current Beta-slider demo
       needs no retrain; this mainly makes exact multi-"pin" in-distribution and unifies
       the two samplers under one helper.)
-  - **Downstream after retraining:** re-run `playground/export_weights.py` for the
-    affected task(s), regenerate fixtures with `playground/parity.py` (they pin the
-    *current* checkpoint — see the fixtures+blob staleness gotcha above), and remove
-    the ≥2-pin OOD trigger in the playground (`PIN_OOD_MIN` in
-    `playground/src/config.ts` and the pin branch of `oodReasons` in
-    `playground/src/gp/demo.ts`).
+  - **Follow-up completed after retraining:** re-ran `playground/export_weights.py`
+    for the affected task(s), regenerated fixtures with `playground/parity.py`
+    (they pin the *current* checkpoint — see the fixtures+blob staleness gotcha
+    above), and removed the ≥2-pin OOD trigger in the playground.
   - **Status (2026-06-07): DONE.** `sample_reveal_mask` in `ace.py`, wired into
     `sample_gp_batch` / `sample_toy_batch`, default `--latent-context-prob` (P(reveal
     any)) = 0.5. Both examples retrained under the new DGP (Gaussian 30k, GP 100k),
@@ -97,7 +95,9 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
     `oodReasons`). Diagnostics still track the oracle (Gaussian μ/log σ ≈ oracle; GP
     predictive RMSE 0.36 vs oracle 0.345). Note GP is a bit *overconfident* on kernel
     identity (Periodic 0.81 vs oracle 0.50) — acceptable for the demo, worth a glance
-    if kernel calibration matters later.
+    if kernel calibration matters later. GP pins-only contexts with no observed data
+    remain flagged OOD in the playground because training used at least four data
+    context points.
 
 ---
 

@@ -1,9 +1,8 @@
 # TASK: implement multi-latent reveal DGP
 
-Spec of record: DEVLOG.md → "NEXT TODO — train multi-latent reveal" (resolved DGP).
-Scope here: the **sampler/DGP code** + smoke verification. Retraining is the user's
-to run; weight re-export / fixture regen / dropping the ≥2-pin OOD banner are
-deferred until a multi-reveal checkpoint exists.
+Spec of record: DEVLOG.md → "Multi-latent reveal (DONE 2026-06-07)".
+Scope here: the sampler/DGP code, smoke verification, and the follow-up
+multi-reveal checkpoint/export/fixture refresh.
 
 ## Checklist
 - [x] Add shared `sample_reveal_mask(n_latents, batch_size, q, device) -> bool[B,L]` to [ace.py](ace.py)
@@ -13,7 +12,7 @@ deferred until a multi-reveal checkpoint exists.
 - [x] Smoke: `gp1d.py --device cpu --steps 20 ...` completes (trains + eval, no error)
 - [x] Smoke: `gaussian_toy.py --device cpu --steps 20 ...` completes (trains + eval, no error)
 - [x] Quick unit check: reveal-mask uniform over non-empty subsets (L=3 ~0.143, L=2 ~0.333; q=1→none, q=0→non-empty)
-- [x] Update DEVLOG status line (samplers implemented; training pending)
+- [x] Update DEVLOG status line (samplers implemented; both examples retrained/exported)
 - [x] /doublecheck — no issues; semantic check confirms complementary ctx/target masks, real multi-reveal, correct representations
 
 Note: initial impl over-weighted singletons (force-one-true); fixed to true
@@ -34,8 +33,8 @@ uniform-over-non-empty-subsets via integer bitmask sampling.
   booleans, so only the reveal computation changes.
 
 ## Status
-COMPLETE (implementation). Sampler/DGP done and verified; both examples smoke-train
-and produce correct multi-reveal batches. Changed files (uncommitted): `ace.py`,
-`gp1d.py`, `gaussian_toy.py`, `DEVLOG.md` (status line), + this tracker. Retraining,
-re-export, fixture regen, and dropping the ≥2-pin OOD banner remain deferred to the
-user (see Deferred).
+COMPLETE. Sampler/DGP code is implemented and smoke-verified. Gaussian was
+retrained for 30k steps and GP-1D for 100k steps under the multi-reveal DGP;
+exports and parity fixtures were regenerated together; the playground ≥2-pin OOD
+banner was removed. The remaining open item is the separate playground
+weight-hosting decision for Pages.

@@ -51,8 +51,8 @@ Implemented modules:
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Next work: use the GP-1D oracle to decide whether the current sampler, model
-size, or training objective needs adjustment before adding more examples.
+Next work: resolve playground weight hosting for Pages, then inspect the retained
+GP-1D checkpoint's kernel calibration before adding more examples.
 
 ## Setup
 
@@ -88,10 +88,9 @@ same checkpoint regenerates the same plotted case.
 The plot also compares the posterior predictive density for a new `y`; the
 analytic predictive is computed by marginalizing over the posterior grid, not by
 plugging posterior moments into a Gaussian.
-Training sometimes reveals one latent as a zero-spread information token and
-asks for the other, so the autoregressive diagnostic is trained on the
-conditional latent queries it uses at evaluation time. The fixed diagnostic
-uses `EVAL_MU_PRIOR = (0.70, 20.0)` and
+Training sometimes reveals a random subset of latents as zero-spread information
+tokens and queries the rest, so exact multi-latent conditioning is now
+in-distribution. The fixed diagnostic uses `EVAL_MU_PRIOR = (0.70, 20.0)` and
 `EVAL_LOGSIG_PRIOR = (0.70, 8.0)` in unit-mean/concentration coordinates.
 
 Useful Gaussian controls:

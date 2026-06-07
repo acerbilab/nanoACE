@@ -48,6 +48,11 @@ function injectCss(): void {
 }
 
 const COL = { ace: "#2563eb", oracle: "#16a34a", prior: "#9ca3af" };
+const BETA_UNIT_EPS = 1e-4;
+
+function clampBetaUnit(x: number): number {
+  return Math.min(Math.max(x, BETA_UNIT_EPS), 1.0 - BETA_UNIT_EPS);
+}
 
 export async function mountGaussian(el: HTMLElement): Promise<void> {
   injectCss();
@@ -205,8 +210,8 @@ export async function mountGaussian(el: HTMLElement): Promise<void> {
 
   function render(): void {
     updateControls();
-    const muUnit = (muMean - muRange[0]) / (muRange[1] - muRange[0]);
-    const lsUnit = (lsMean - lsRange[0]) / (lsRange[1] - lsRange[0]);
+    const muUnit = clampBetaUnit((muMean - muRange[0]) / (muRange[1] - muRange[0]));
+    const lsUnit = clampBetaUnit((lsMean - lsRange[0]) / (lsRange[1] - lsRange[0]));
 
     const nFar = yObs.filter((y) => Math.abs(y) > GAUSSIAN.Y_OOD).length;
     banner.hidden = nFar === 0;

@@ -57,10 +57,11 @@ npm test           # vitest: parity + orchestration + UI smoke tests
 ### Out-of-distribution guardrails
 
 The models were trained on a bounded regime (`x, y ≈ [-1, 1]`, ≤ ~14 context
-points, one latent revealed at a time). The demos let you roam, but flag when you
-leave that regime (a banner names why). In particular, **pinning ≥ 2 latents at
-once is out-of-distribution** for the current checkpoints — see the DEVLOG TODO
-about retraining with a multi-latent reveal scheme.
+points, with a random subset of latents sometimes revealed). The demos let you
+roam, but flag when you leave that regime (a banner names why). Pinning multiple
+latents is now in-distribution for the current multi-reveal checkpoints. For
+GP-1D, a pins-only context with no observed data is still flagged because GP
+training used at least four data context points.
 
 ## Weights (not committed — generate locally)
 
@@ -105,7 +106,8 @@ setup: repo **Settings → Pages → Source = GitHub Actions**. The production b
 path is `/nanoACE/` (set automatically in CI via `GITHUB_ACTIONS`).
 
 **Pending:** because the weights are not committed, the deploy is blocked until
-the hosting decision is made — the build would ship without `public/models/`.
-Resolving it means one of: commit the blobs, use Git LFS (`lfs: true` on
-checkout), or have the demo fetch them at runtime. The checkpoints aren't in the
-repo either, so generating weights inside CI isn't currently an option.
+the hosting decision is made. The workflow fails fast if `public/models/` is
+missing, so it cannot publish a weightless demo by accident. Resolving it means
+one of: commit the blobs, use Git LFS (`lfs: true` on checkout), or have the demo
+fetch them at runtime. The checkpoints aren't in the repo either, so generating
+weights inside CI isn't currently an option.

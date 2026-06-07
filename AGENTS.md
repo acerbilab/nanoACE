@@ -88,6 +88,10 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   internal-coordinate spread. Spread zero is an exact known latent value. Gaussian emits
   finite-spread Beta information tokens; GP-1D emits no finite-spread priors, only
   zero-spread tokens when a continuous latent is revealed.
+- **Latent reveal uses uniform non-empty subsets.** `sample_reveal_mask` in `ace.py`
+  chooses no reveal with probability `q`; otherwise it samples a uniform non-empty
+  subset of the task latents. Gaussian and GP-1D are both trained under this multi-reveal
+  DGP, so exact multi-pin conditioning in the playground is in-distribution.
 - **Data values remain task-scaled.** Data values should generally be scaled around
   `[-1, 1]` at generation time. This is a soft convention, not clipping: Gaussian and
   GP samples can have stochastic tails outside that range, which may matter when reading

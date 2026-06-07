@@ -1,7 +1,7 @@
 # Plan: nanoACE Web Playground (in-browser TS port)
 
 Created: 2026-06-07
-Status: IN PROGRESS (implementing 2026-06-07)
+Status: COMPLETE
 
 ## Progress tracker
 
@@ -25,7 +25,7 @@ Details for each item live in the phase sections below — this is just the live
 **Phase 2 — GP-1D demo**
 - [x] gp/infer.ts (pure) + gp/demo.ts (UI): band, latent marginals, kernel bars
 - [x] interaction (add/drag/delete) + pin controls (kernel + ell/scale) + thick line/locked bar
-- [x] guardrails + OOD banner (y, count, ≥2 pins) + empty-context guard
+- [x] guardrails + OOD banner (y, count, GP pins-only context) + empty-context guard
 - [x] verify vs gp1d.py (gp/infer.test.ts) + jsdom UI smoke (gp/demo.smoke.test.ts)
 
 **Phase 3 — Gaussian demo + oracle**
@@ -62,9 +62,9 @@ is gitignored — the weight-hosting decision (commit / Git LFS / external fetch
 retrains. Regenerate blobs locally via `export_weights.py` before `npm run dev` / `npm test`.
 
 **Still open (parked):**
-- Weight hosting → blocks the Pages deploy (the build would ship without `public/models/`;
-  checkpoints aren't in the repo either, so CI can't generate them). Decide commit vs LFS
-  vs runtime-fetch.
+- Weight hosting → blocks the Pages deploy. The workflow now fails fast if
+  `public/models/` is absent; checkpoints aren't in the repo, so CI can't generate
+  weights. Decide commit vs LFS vs runtime-fetch.
 - One-time GitHub setup when deploying: Settings → Pages → Source = GitHub Actions.
 
 ## Summary
@@ -92,12 +92,13 @@ torch-only; the playground is an explicitly non-core example.
   - Gaussian demo: Beta-prior sliders (`mu`, `log_sigma`) + observed `y`; posterior
     marginals + posterior predictive; TS port of the analytic grid oracle overlay.
   - GitHub Pages deploy workflow; playground README; DEVLOG + README + AGENTS updates.
-  - Commit the (small) exported weight blobs so the demo is self-contained.
+  - Add export/fixture tooling for generated weight blobs. The blobs themselves
+    remain gitignored until the hosting decision is made.
 - **Out of scope (v1)**
   - AR joint-sample draws ("draw sample functions") — deferred, easy to add later.
   - GP numerical oracle in-browser (live Cholesky-over-grid) — GP stays a playground.
-  - WebGPU / quantization — plain fp32 typed arrays; model is tiny.
-  - Retraining for multi-latent reveal — captured as a DEVLOG to-do, not done here.
+  - WebGPU / extra quantization beyond the adopted fp16 weight blobs.
+  - Further retraining beyond the completed multi-latent reveal checkpoints.
   - Any change to `ace.py` / core training (the port is a read-only snapshot).
 
 ## Decisions locked (from discussion)
@@ -105,16 +106,15 @@ torch-only; the playground is an explicitly non-core example.
 - In-browser TS port; GitHub Pages; both demos, GP first.
 - GP = playground (no oracle). Gaussian = with analytic oracle overlay.
 - "Pin a latent and predict" is the GP centerpiece.
-- **Multi-pin (double/triple) is allowed** in the UI. It is **OOD** for current
-  checkpoints (training reveals ≤1 latent at a time) and fires the OOD banner.
-  A DEVLOG to-do records: retrain with a multi-latent reveal scheme to make it
-  in-distribution.
+- **Multi-pin (double/triple) is allowed** in the UI and is in-distribution for
+  the current multi-reveal checkpoints. GP pins-only context with no observed data
+  is still flagged because GP training used at least four data context points.
 - Pinned latent: keep its posterior panel; draw the conditioned value as a thick
   vertical line (discrete kernel: lock/outline the chosen bar). **Do not re-query a
   pinned latent's posterior** (training never queried a revealed latent → OOD); the
   thick line replaces its curve while the other panels stay live.
 - OOD: soft guardrails + explicit "outside training range" callout.
-- Reuse existing `artifacts/*.pt`; ship weights as-is (no fp16).
+- Reuse existing `artifacts/*.pt`; export fp16 browser weights locally.
 - Lives in-repo at `playground/`.
 
 ## Exploration summary (done)

@@ -141,6 +141,8 @@ def sample_reveal_mask(
 
     if not 0.0 <= q <= 1.0:
         raise ValueError(f"reveal q must be in [0, 1], got {q}")
+    if not 1 <= n_latents <= 62:
+        raise ValueError("n_latents must be in [1, 62] for int64 bitmask sampling")
     reveal_any = torch.rand(batch_size, device=device) >= q  # P(reveal any) = 1 - q
     # Revealing tasks pick a subset uniformly over the 2^L - 1 non-empty subsets,
     # encoded as an integer in [1, 2^L - 1] and decoded to a per-latent bitmask.
@@ -636,6 +638,8 @@ class ACE(nn.Module):
         ctx_mask, tgt_mask = batch.context.mask, batch.target.mask
         if not bool(ctx_mask.any()):
             raise ValueError("ACE needs at least one active context token")
+        if not bool(ctx_mask.any(dim=1).all()):
+            raise ValueError("ACE needs at least one active context token per batch row")
         for block in self.blocks:
             ctx, tgt = block(ctx, tgt, ctx_mask, tgt_mask)
         tgt = self.final_norm(tgt)
