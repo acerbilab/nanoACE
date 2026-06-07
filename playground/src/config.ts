@@ -10,7 +10,6 @@ export const GP = {
   Y_NORMAL: [-1, 1] as [number, number], // "in training range" band, lightly shaded
   Y_OOD: 2.0, // |y| beyond this flags a point as out-of-distribution
   MAX_CONTEXT_HINT: 14, // training max_context; more points = soft OOD hint
-  PIN_OOD_MIN: 2, // pinning this many latents at once is OOD (training revealed ≤1)
   BAND_POINTS: 161, // predictive-band resolution
   LATENT_GRID: 80, // resolution of the lengthscale/outputscale marginals
   HIT_RADIUS_PX: 12, // click radius for grabbing/deleting a point

@@ -19,10 +19,11 @@ deferred until a multi-reveal checkpoint exists.
 Note: initial impl over-weighted singletons (force-one-true); fixed to true
 uniform-over-non-empty-subsets via integer bitmask sampling.
 
-## Deferred (post-training, not in this task)
-- Retrain gp1d + gaussian_toy with the new DGP
-- Re-run export_weights.py + parity.py (together) for retrained checkpoints
-- Remove ≥2-pin OOD trigger (`PIN_OOD_MIN` / `oodReasons`) in playground
+## Deferred → DONE (2026-06-07, follow-up)
+- [x] Retrain gaussian_toy (30k) + gp1d (100k) with the new DGP — both track the oracle
+- [x] Re-run export_weights.py + parity.py (together); fixtures regenerated; playground 10/10
+- [x] Remove ≥2-pin OOD trigger (`PIN_OOD_MIN` from config.ts; pin branch from `oodReasons`)
+- Note: GP kernel posterior is a bit overconfident vs the oracle (Periodic 0.81 vs 0.50) — see DEVLOG.
 
 ## Decisions / notes
 - Helper lives in `ace.py` (both examples already `from ace import ...`; precedent:

@@ -50,11 +50,11 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   risks the fetched weights drifting out of sync with the parity-pinned code, the
   one integrity property this design leans on). Regenerate locally via
   `export_weights.py` meanwhile. The Pages deploy is blocked until this resolves.
-- **NEXT TODO — train multi-latent reveal (so playground multi-pin is in-distribution).**
-  This is the next planned task. Today both samplers reveal *at most one* latent as
-  context per example, so pinning two or three latents in the playground is
-  out-of-distribution (the UI flags it with the OOD banner) and not a calibrated
-  posterior — just a "what happens off-distribution" demonstration.
+- **Multi-latent reveal (DONE 2026-06-07) — playground multi-pin is now in-distribution.**
+  Previously both samplers revealed *at most one* latent as context per example, so
+  pinning two or three latents in the playground was out-of-distribution. The DGP
+  below was implemented and both examples retrained (Gaussian 30k, GP 100k), so
+  multi-pin is now a real conditional and the ≥2-pin OOD banner has been removed.
   - **Why:** the playground's headline interaction is "pin latents and predict";
     multi-pin should be a real conditional, not OOD.
   - **Resolved DGP — the reveal/conditioning distribution (decided 2026-06-07).**
@@ -89,13 +89,15 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
     the ≥2-pin OOD trigger in the playground (`PIN_OOD_MIN` in
     `playground/src/config.ts` and the pin branch of `oodReasons` in
     `playground/src/gp/demo.ts`).
-  - **Status (2026-06-07):** DGP decided *and implemented* — `sample_reveal_mask`
-    in `ace.py`, wired into `sample_gp_batch` / `sample_toy_batch`, default
-    `--latent-context-prob` (P(reveal any)) bumped to 0.5; both samplers smoke-train.
-    **Training not yet run**, so current checkpoints are still single-reveal: the
-    playground ≥2-pin OOD banner stays until a multi-reveal checkpoint is trained,
-    re-exported, and its fixtures regenerated. (The 12:52 GP retrain was an earlier
-    single-reveal checkpoint, unrelated.)
+  - **Status (2026-06-07): DONE.** `sample_reveal_mask` in `ace.py`, wired into
+    `sample_gp_batch` / `sample_toy_batch`, default `--latent-context-prob` (P(reveal
+    any)) = 0.5. Both examples retrained under the new DGP (Gaussian 30k, GP 100k),
+    blobs re-exported and fixtures regenerated, and the playground ≥2-pin OOD trigger
+    removed (`PIN_OOD_MIN` deleted from `config.ts`; pin branch dropped from
+    `oodReasons`). Diagnostics still track the oracle (Gaussian μ/log σ ≈ oracle; GP
+    predictive RMSE 0.36 vs oracle 0.345). Note GP is a bit *overconfident* on kernel
+    identity (Periodic 0.81 vs oracle 0.50) — acceptable for the demo, worth a glance
+    if kernel calibration matters later.
 
 ---
 

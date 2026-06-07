@@ -220,9 +220,8 @@ export async function mountGP(el: HTMLElement): Promise<void> {
     if (nFar > 0) reasons.push(`${nFar} point(s) beyond training y-range (|y| > ${GP.Y_OOD})`);
     if (points.length > GP.MAX_CONTEXT_HINT)
       reasons.push(`${points.length} points (training used ≤ ${GP.MAX_CONTEXT_HINT})`);
-    const nPinned = (pin.kernel !== null ? 1 : 0) + (pin.ell ? 1 : 0) + (pin.scale ? 1 : 0);
-    if (nPinned >= GP.PIN_OOD_MIN)
-      reasons.push(`${nPinned} latents pinned at once (training revealed ≤ 1)`);
+    // Multi-pin is in-distribution since the multi-latent-reveal retrain, so pinning
+    // any subset of latents no longer flags OOD.
     return reasons;
   }
 
