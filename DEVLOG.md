@@ -57,22 +57,41 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   posterior — just a "what happens off-distribution" demonstration.
   - **Why:** the playground's headline interaction is "pin latents and predict";
     multi-pin should be a real conditional, not OOD.
-  - **What to change (samplers):** replace the single-reveal logic with an
-    independent reveal per latent over a random *subset*.
-    - `gp1d.sample_gp_batch`: drop `reveal_which` (the `randint(0,3)` pick of one of
-      lengthscale/outputscale/kernel); instead reveal each latent independently
-      (e.g. per-latent Bernoulli), masking each revealed latent into context and out
-      of the target. Allow the kernel to be revealed together with continuous latents.
-    - `gaussian_toy.sample_toy_batch`: replace the `reveal_mu` xor `reveal_logsig`
-      with independent reveals of `mu` and `log_sigma`.
+  - **Resolved DGP — the reveal/conditioning distribution (decided 2026-06-07).**
+    The task generators are otherwise unchanged (latent priors/ranges, kernels,
+    function sampling); only how each task chooses revealed-vs-queried latents changes.
+    - **Reveal mask (shared helper, both examples).** Per task: with prob `q` reveal
+      *nothing*; otherwise reveal a **uniform random non-empty subset** of the latents.
+      Implement once, e.g. `sample_reveal_mask(n_latents, batch, q, device) -> bool[B, L]`:
+      `reveal_any ~ Bernoulli(1-q)`; if revealing, each latent `~ Bernoulli(0.5)` (force
+      one True when the draw is all-False → uniform over non-empty subsets), else
+      all-False. Default `q ≈ 0.5`, tunable per example — keeps the headline 0-reveal
+      case at ~half the mass while the rest covers every multi-pin combination.
+    - **Mental model.** Every latent's prior token has a spread running from informative
+      (Beta) → zero (exact). The reveal mask picks *which latents have zero spread (exact)*.
+    - **GP (`gp1d.sample_gp_batch`) — exact-only, stays finite-prior-free.** Drop
+      `reveal_which` (the `randint(0,3)` single pick); use the shared mask. A *revealed*
+      latent enters context as a zero-spread token (continuous → zero-spread `PRIOR`,
+      `kernel` → `VALUE` class label) and is dropped from the target; a *non-revealed*
+      latent has **no** prior token and is queried. The kernel may be revealed together
+      with continuous latents.
+    - **Gaussian (`gaussian_toy.sample_toy_batch`) — keep the always-present Beta priors.**
+      Both latents always carry a runtime Beta prior token (the latent is drawn from it),
+      exactly as today — that is the ACEP demo and is already in-distribution. Replace
+      `reveal_mu` xor `reveal_logsig` with the shared mask: a *revealed* latent collapses
+      its Beta slot to a zero-spread exact token and leaves the target; a *non-revealed*
+      latent keeps its finite Beta prior and is queried. (The current Beta-slider demo
+      needs no retrain; this mainly makes exact multi-"pin" in-distribution and unifies
+      the two samplers under one helper.)
   - **Downstream after retraining:** re-run `playground/export_weights.py` for the
     affected task(s), regenerate fixtures with `playground/parity.py` (they pin the
     *current* checkpoint — see the fixtures+blob staleness gotcha above), and remove
     the ≥2-pin OOD trigger in the playground (`PIN_OOD_MIN` in
     `playground/src/config.ts` and the pin branch of `oodReasons` in
     `playground/src/gp/demo.ts`).
-  - **Status (2026-06-07):** not done. The 12:52 GP retrain was a better
-    *single-reveal* checkpoint, not this — multi-latent training is still pending.
+  - **Status (2026-06-07):** DGP decided (above); samplers not yet changed and
+    training not run. The 12:52 GP retrain was a better *single-reveal* checkpoint,
+    not this.
 
 ---
 
