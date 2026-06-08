@@ -46,6 +46,7 @@ from pathlib import Path
 
 import torch
 
+import data
 import train
 from ace import ACE, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value, sample_reveal_mask
 from ace_prior_beta import (
@@ -75,6 +76,13 @@ Y_OPT_RANGE = (-1.0, 0.0)
 Y_RANGE = (-1.0, 2.0)
 ENVELOPE = 0.2  # paper's 1/5 convex envelope constant
 D_CAP = 2.0  # cap |natural optimum depth| so it cannot inflate the function height
+N_TOTAL = 64  # data observation points per instance (context + targets); the pool's [n, N_TOTAL] data width
+# Frozen DGP constants for an offline pool (also the matching CLI defaults, so online and
+# the pool share one source of truth for the data-generating process).
+GEN_SIGMA_OBS = 0.02
+GEN_SIGMA_F_MAX = 0.5
+GEN_PRIOR_UNIFORM_MIX = 0.05  # epsilon for the contaminated prior
+GEN_JITTER = 1e-5
 
 # Fixed diagnostic case (seeded). The context points are sparse and not at the
 # optimum, so the location prior visibly matters.
@@ -359,113 +367,194 @@ def _planted_function(
     return g_eval.sub(depth[:, None]).abs() + ENVELOPE * x_eval_rel.pow(2) + y_opt[:, None]
 
 
-def sample_bo_batch(
-    vars_: list[Variable],
+def draw_instances(
+    n_instances: int,
     *,
-    batch_size: int,
-    max_context: int,
-    min_context: int,
-    data_targets: int,
-    device: torch.device | str,
-    latent_context_prob: float,
+    n_points: int,
     prior_uniform_mix: float,
     sigma_obs: float,
     sigma_f_max: float,
     jitter: float,
-) -> BOBatch:
-    """Sample one online BO training batch."""
+) -> dict[str, torch.Tensor]:
+    """Draw the expensive BO physics for `n_instances` tasks (CPU float64, no tokens).
 
-    device = torch.device(device)
-    total = max_context + data_targets
+    Struct-of-arrays, `n_points` observation points each. RNG draw order is
+    `prior params x/y -> contaminated x_opt/y_opt -> kernel -> ell -> sigma_f -> depth ->
+    x_data -> planted f -> noise`; keep it stable so the online path (post per-step reseed)
+    matches the old monolithic sampler. Nuisance kernel/ell/sigma_f/depth are consumed into
+    `y` and not returned (so a `data.py` pool stores no categorical field). The split /
+    reveal / tokenization is `assemble`'s job.
+    """
 
-    # Priors (token) via the shared hyperprior; truth via epsilon-contamination.
-    x_unit, x_nu = sample_prior_params((batch_size,), device="cpu")
-    y_unit, y_nu = sample_prior_params((batch_size,), device="cpu")
+    x_unit, x_nu = sample_prior_params((n_instances,), device="cpu")
+    y_unit, y_nu = sample_prior_params((n_instances,), device="cpu")
     x_opt = sample_contaminated(x_unit, x_nu, *X_OPT_RANGE, prior_uniform_mix).double()
     y_opt = sample_contaminated(y_unit, y_nu, *Y_OPT_RANGE, prior_uniform_mix).double()
 
-    kernel = torch.multinomial(torch.tensor(KERNEL_WEIGHTS), batch_size, replacement=True)
-    ell = _sample_lengthscale(batch_size)
-    sigma_f = torch.empty(batch_size, dtype=torch.float64).uniform_(0.1, sigma_f_max)
+    kernel = torch.multinomial(torch.tensor(KERNEL_WEIGHTS), n_instances, replacement=True)
+    ell = _sample_lengthscale(n_instances)
+    sigma_f = torch.empty(n_instances, dtype=torch.float64).uniform_(0.1, sigma_f_max)
     depth = _sample_depth(sigma_f, ell)
 
-    x_data = 2.0 * torch.rand(batch_size, total, dtype=torch.float64) - 1.0
-    f = _planted_function(x_opt, x_data, kernel, ell, sigma_f, depth, y_opt, jitter=jitter)
-    y_native = f + sigma_obs * torch.randn(batch_size, total, dtype=torch.float64)
+    x = 2.0 * torch.rand(n_instances, n_points, dtype=torch.float64) - 1.0
+    f = _planted_function(x_opt, x, kernel, ell, sigma_f, depth, y_opt, jitter=jitter)
+    y = f + sigma_obs * torch.randn(n_instances, n_points, dtype=torch.float64)
+    return {
+        "x": x,
+        "y": y,
+        "x_opt": x_opt,
+        "y_opt": y_opt,
+        "x_unit": x_unit,
+        "x_nu": x_nu,
+        "y_unit": y_unit,
+        "y_nu": y_nu,
+    }
 
-    # Move to device / float32.
-    x_data_d = x_data.float().to(device)
-    y_native_d = y_native.float().to(device)
-    x_opt_d = x_opt.float().to(device)
-    y_opt_d = y_opt.float().to(device)
-    x_opt_internal = encode_value(vars_[1], x_opt_d)
-    y_opt_internal = encode_value(vars_[2], y_opt_d)
-    x_unit_d, x_nu_d = x_unit.to(device), x_nu.to(device)
-    y_unit_d, y_nu_d = y_unit.to(device), y_nu.to(device)
 
-    n_ctx = torch.randint(min_context, max_context + 1, (batch_size,), device=device)
-    ar = torch.arange(max_context, device=device)[None, :]
-    reveal_mask = sample_reveal_mask(2, batch_size, q=1.0 - latent_context_prob, device=device)
-    reveal_x = reveal_mask[:, 0]
-    reveal_y = reveal_mask[:, 1]
+def assemble(
+    inst: dict[str, torch.Tensor],
+    *,
+    variables: list[Variable],
+    n_context: torch.Tensor,
+    reveal_mask: torch.Tensor,
+    max_context: int,
+    device: torch.device | str,
+) -> Batch:
+    """Tokenize drawn BO instances into an ACE `Batch` (RNG-free).
 
+    `n_context` (`[B]`) and `reveal_mask` (`[B, 2]`) are decided by the caller -- the online
+    path from the global RNG, the offline `data.py` reader from a stateless index hash -- so
+    this is deterministic given its inputs and shared by both. The first `max_context` points
+    are context candidates (first `n_context` active); **targets are all non-context points**
+    (`n_target = n_points - n_context`), the target block masked `>= n_context`. The two
+    optimum latents always carry a Beta PRIOR token (zero-spread known token when revealed).
+    CPU-native `inst` physics is moved to `device` as float32 here.
+    """
+
+    device = torch.device(device)
+    b = int(inst["x"].shape[0])
+    n_points = int(inst["x"].shape[1])
+    if not 1 <= max_context < n_points:
+        raise ValueError(f"need 1 <= max_context ({max_context}) < n_points ({n_points}) for >=1 target")
+    x_data_d = inst["x"].float().to(device)
+    y_native_d = inst["y"].float().to(device)
+    x_opt_d = inst["x_opt"].float().to(device)
+    y_opt_d = inst["y_opt"].float().to(device)
+    x_opt_internal = encode_value(variables[1], x_opt_d)
+    y_opt_internal = encode_value(variables[2], y_opt_d)
+    x_unit_d, x_nu_d = inst["x_unit"].to(device), inst["x_nu"].to(device)
+    y_unit_d, y_nu_d = inst["y_unit"].to(device), inst["y_nu"].to(device)
+
+    reveal_x, reveal_y = reveal_mask[:, 0], reveal_mask[:, 1]
+
+    # Context: first max_context points (first n_context active) + the 2 optimum PRIOR tokens.
     ctx_t = max_context + 2
     x_pos, y_pos = max_context, max_context + 1
-    ctx_var = torch.zeros(batch_size, ctx_t, device=device, dtype=torch.long)
+    ctx_var = torch.zeros(b, ctx_t, device=device, dtype=torch.long)
     ctx_var[:, x_pos] = 1
     ctx_var[:, y_pos] = 2
-    ctx_x = torch.zeros(batch_size, ctx_t, 1, device=device)
+    ctx_x = torch.zeros(b, ctx_t, 1, device=device)
     ctx_x[:, :max_context, 0] = x_data_d[:, :max_context]
-    ctx_value = torch.zeros(batch_size, ctx_t, device=device)
+    ctx_value = torch.zeros(b, ctx_t, device=device)
     ctx_value[:, :max_context] = scale_y(y_native_d[:, :max_context])
     ctx_value[:, x_pos] = x_opt_internal
     ctx_value[:, y_pos] = y_opt_internal
-    ctx_prior = torch.zeros(batch_size, ctx_t, PRIOR_FEATURES, device=device)
+    ctx_prior = torch.zeros(b, ctx_t, PRIOR_FEATURES, device=device)
     ctx_prior[:, x_pos] = prior_features(x_unit_d, x_nu_d)
     ctx_prior[:, y_pos] = y_opt_prior_features(y_unit_d, y_nu_d)
     ctx_prior[:, x_pos] = torch.where(reveal_x[:, None], known_latent_features(x_opt_internal), ctx_prior[:, x_pos])
     ctx_prior[:, y_pos] = torch.where(reveal_y[:, None], known_latent_features(y_opt_internal), ctx_prior[:, y_pos])
-    ctx_mode = torch.full((batch_size, ctx_t), VALUE, device=device)
+    ctx_mode = torch.full((b, ctx_t), VALUE, device=device)
     ctx_mode[:, x_pos] = PRIOR
     ctx_mode[:, y_pos] = PRIOR
-    ctx_mask = torch.zeros(batch_size, ctx_t, device=device, dtype=torch.bool)
-    ctx_mask[:, :max_context] = ar < n_ctx[:, None]
+    ctx_mask = torch.zeros(b, ctx_t, device=device, dtype=torch.bool)
+    ctx_ar = torch.arange(max_context, device=device)[None, :]
+    ctx_mask[:, :max_context] = ctx_ar < n_context[:, None]
     ctx_mask[:, x_pos] = True
     ctx_mask[:, y_pos] = True
     context = make_tokens(var_id=ctx_var, x=ctx_x, value=ctx_value, mode=ctx_mode, mask=ctx_mask, prior=ctx_prior)
 
-    tgt_t = 2 + data_targets
-    tgt_var = torch.zeros(batch_size, tgt_t, device=device, dtype=torch.long)
+    # Target: all non-context points (mask >= n_context) plus the 2 optimum queries.
+    tgt_t = n_points + 2
+    tgt_var = torch.zeros(b, tgt_t, device=device, dtype=torch.long)
     tgt_var[:, 0] = 1
     tgt_var[:, 1] = 2
-    tgt_x = torch.zeros(batch_size, tgt_t, 1, device=device)
-    tgt_x[:, 2:, 0] = x_data_d[:, max_context:]
-    tgt_value = torch.zeros(batch_size, tgt_t, device=device)
+    tgt_x = torch.zeros(b, tgt_t, 1, device=device)
+    tgt_x[:, 2:, 0] = x_data_d
+    tgt_value = torch.zeros(b, tgt_t, device=device)
     tgt_value[:, 0] = x_opt_internal
     tgt_value[:, 1] = y_opt_internal
-    tgt_value[:, 2:] = scale_y(y_native_d[:, max_context:])
-    tgt_mask = torch.ones(batch_size, tgt_t, device=device, dtype=torch.bool)
+    tgt_value[:, 2:] = scale_y(y_native_d)
+    tgt_mask = torch.ones(b, tgt_t, device=device, dtype=torch.bool)
     tgt_mask[:, 0] = ~reveal_x
     tgt_mask[:, 1] = ~reveal_y
+    tgt_ar = torch.arange(n_points, device=device)[None, :]
+    tgt_mask[:, 2:] = tgt_ar >= n_context[:, None]
     target = make_tokens(
         var_id=tgt_var,
         x=tgt_x,
         value=tgt_value,
-        mode=torch.full((batch_size, tgt_t), QUERY, device=device),
+        mode=torch.full((b, tgt_t), QUERY, device=device),
         mask=tgt_mask,
     )
-    return BOBatch(
-        Batch(vars_, context, target),
-        x_data_d[:, :max_context],
-        y_native_d[:, :max_context],
-        x_data_d[:, max_context:],
-        y_native_d[:, max_context:],
-        x_opt_d,
-        y_opt_d,
-        x_unit_d,
-        x_nu_d,
-        y_unit_d,
-        y_nu_d,
+    return Batch(variables, context, target)
+
+
+def online_batch(model: ACE, args: argparse.Namespace, device: torch.device | str) -> Batch:
+    """Draw + assemble one online BO training batch (global RNG; see `assemble`)."""
+
+    inst = draw_instances(
+        args.batch_size,
+        n_points=N_TOTAL,
+        prior_uniform_mix=args.prior_uniform_mix,
+        sigma_obs=args.sigma_obs,
+        sigma_f_max=args.sigma_f_max,
+        jitter=args.jitter,
+    )
+    n_context = torch.randint(args.min_context, args.max_context + 1, (args.batch_size,), device=device)
+    reveal_mask = sample_reveal_mask(2, args.batch_size, q=1.0 - args.latent_context_prob, device=device)
+    return assemble(
+        inst,
+        variables=model.variables,
+        n_context=n_context,
+        reveal_mask=reveal_mask,
+        max_context=args.max_context,
+        device=device,
+    )
+
+
+def gen_config() -> dict:
+    """Frozen DGP constants that define an offline pool's identity (hashed; drift => regenerate)."""
+
+    return {
+        "kernels": list(KERNELS),
+        "kernel_weights": list(KERNEL_WEIGHTS),
+        "ell_mean": ELL_MEAN,
+        "ell_std": ELL_STD,
+        "ell_range": list(ELL_RANGE),
+        "x_opt_range": list(X_OPT_RANGE),
+        "y_opt_range": list(Y_OPT_RANGE),
+        "y_range": list(Y_RANGE),
+        "envelope": ENVELOPE,
+        "d_cap": D_CAP,
+        "sigma_f_max": GEN_SIGMA_F_MAX,
+        "sigma_obs": GEN_SIGMA_OBS,
+        "eps": GEN_PRIOR_UNIFORM_MIX,
+        "N_TOTAL": N_TOTAL,
+        "jitter": GEN_JITTER,
+    }
+
+
+def draw_pool(n_instances: int) -> dict[str, torch.Tensor]:
+    """`draw_instances` bound to the frozen pool DGP config (used by `data.write_pool`)."""
+
+    return draw_instances(
+        n_instances,
+        n_points=N_TOTAL,
+        prior_uniform_mix=GEN_PRIOR_UNIFORM_MIX,
+        sigma_obs=GEN_SIGMA_OBS,
+        sigma_f_max=GEN_SIGMA_F_MAX,
+        jitter=GEN_JITTER,
     )
 
 
@@ -730,20 +819,15 @@ def scale_check(args: argparse.Namespace) -> None:
 
     device = torch.device(args.device)
     torch.manual_seed(args.seed)
-    toy = sample_bo_batch(
-        variables(),
-        batch_size=4096,
-        max_context=args.max_context,
-        min_context=args.min_context,
-        data_targets=args.data_targets,
-        device=device,
-        latent_context_prob=0.0,
+    inst = draw_instances(
+        4096,
+        n_points=N_TOTAL,
         prior_uniform_mix=args.prior_uniform_mix,
         sigma_obs=args.sigma_obs,
         sigma_f_max=args.sigma_f_max,
         jitter=args.jitter,
     )
-    y_tok = scale_y(torch.cat([toy.y_context, toy.y_target], dim=1))
+    y_tok = scale_y(inst["y"].float().to(device))
     q = torch.tensor([0.0, 0.001, 0.01, 0.5, 0.99, 0.999, 1.0], device=y_tok.device)
     quant = torch.quantile(y_tok.flatten(), q)
     frac_out = float((y_tok.abs() > 1.0).float().mean())
@@ -752,8 +836,8 @@ def scale_check(args: argparse.Namespace) -> None:
     print("  " + "  ".join(f"{float(v): .3f}" for v in quant))
     print(f"  fraction |token| > 1: {frac_out:.4f}")
     print(f"  native y_opt range used: {Y_OPT_RANGE}, data Y_RANGE: {Y_RANGE}")
-    print(f"  x_opt in [-1,1]: {float((toy.x_opt.abs() <= 1).float().mean()):.4f}")
-    print(f"  y_opt in Y_OPT_RANGE: {float(((toy.y_opt >= Y_OPT_RANGE[0]) & (toy.y_opt <= Y_OPT_RANGE[1])).float().mean()):.4f}")
+    print(f"  x_opt in [-1,1]: {float((inst['x_opt'].abs() <= 1).float().mean()):.4f}")
+    print(f"  y_opt in Y_OPT_RANGE: {float(((inst['y_opt'] >= Y_OPT_RANGE[0]) & (inst['y_opt'] <= Y_OPT_RANGE[1])).float().mean()):.4f}")
 
     # Contamination marginal: fixed concentrated token, many truth draws.
     mu = torch.full((200000,), 0.75)
@@ -770,11 +854,12 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line options for the BO example."""
 
     p = argparse.ArgumentParser(parents=[train.common_parser()], description="Train/evaluate the nanoACE 1D BO example.")
+    # Targets are all non-context points (complement-targets); N_TOTAL is the point budget.
+    # `--data-targets` is inherited from common_parser but unused by BO (no-op).
     p.set_defaults(
         batch_size=64,
-        max_context=12,
+        max_context=20,
         min_context=1,
-        data_targets=24,
         d_model=192,
         heads=16,
         layers=6,
@@ -784,11 +869,13 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--eval-points", type=int, default=160)
     p.add_argument("--bins", type=int, default=80, help="diagnostic grid bins")
-    p.add_argument("--prior-uniform-mix", type=float, default=0.05, help="epsilon for the contaminated prior")
-    p.add_argument("--sigma-obs", type=float, default=0.02)
-    p.add_argument("--sigma-f-max", type=float, default=0.5)
-    p.add_argument("--jitter", type=float, default=1e-5)
+    p.add_argument("--prior-uniform-mix", type=float, default=GEN_PRIOR_UNIFORM_MIX, help="epsilon for the contaminated prior")
+    p.add_argument("--sigma-obs", type=float, default=GEN_SIGMA_OBS)
+    p.add_argument("--sigma-f-max", type=float, default=GEN_SIGMA_F_MAX)
+    p.add_argument("--jitter", type=float, default=GEN_JITTER)
     p.add_argument("--scale-check", action="store_true", help="sample a batch and report token scale, then exit")
+    p.add_argument("--pool", default="", help="train from an offline data.py pool directory instead of online")
+    p.add_argument("--pool-force", action="store_true", help="reuse a pool despite a DGP config-hash mismatch")
     return train.apply_config_file(p)
 
 
@@ -817,21 +904,33 @@ def main() -> None:
         resume_state = (
             torch.load(args.resume, map_location=device, weights_only=False) if args.resume else None
         )
-        model = train.fit(
-            model,
-            lambda: sample_bo_batch(
-                model.variables,
+        if args.pool:
+            _frozen = {"jitter": GEN_JITTER, "sigma_obs": GEN_SIGMA_OBS,
+                       "sigma_f_max": GEN_SIGMA_F_MAX, "prior_uniform_mix": GEN_PRIOR_UNIFORM_MIX}
+            _bad = {k: getattr(args, k) for k, v in _frozen.items() if getattr(args, k) != v}
+            if _bad:
+                raise SystemExit(
+                    f"--pool freezes the DGP; these flags differ from the pool's gen_config and would only "
+                    f"affect diagnostics, not the cached data: {_bad}. Regenerate the pool or drop --pool."
+                )
+            source = data.PoolReader(
+                args.pool,
+                assemble=assemble,
+                variables=model.variables,
+                gen_config=gen_config(),
                 batch_size=args.batch_size,
+                seed=args.seed,
                 max_context=args.max_context,
                 min_context=args.min_context,
-                data_targets=args.data_targets,
-                device=device,
                 latent_context_prob=args.latent_context_prob,
-                prior_uniform_mix=args.prior_uniform_mix,
-                sigma_obs=args.sigma_obs,
-                sigma_f_max=args.sigma_f_max,
-                jitter=args.jitter,
-            ).batch,
+                device=device,
+                force=args.pool_force,
+            )
+        else:
+            source = lambda step: online_batch(model, args, device)
+        model = train.fit(
+            model,
+            source,
             train.TrainConfig.from_args(args),
             resume_state=resume_state,
             seed=args.seed,

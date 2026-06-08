@@ -40,9 +40,18 @@ Implemented modules:
 - [train.py](train.py): shared training infrastructure for the examples — the
   Adam + grad-clip loop (`fit`), cosine LR (default) or constant, simple resume,
   checkpoint save/load, model construction, and a `common_parser()` argparse
-  parent with a light-YAML `--config`. Each example keeps its own `main()`,
-  sampler, and diagnostics; `fit` takes a `() -> Batch` thunk so a future sharded
-  `data.py` reader drops in unchanged.
+  parent with a light-YAML `--config`. `fit` reseeds the global RNG with
+  `mix_seed(seed, step)` each step, so the training stream is a pure function of
+  `(seed, step)` — reproducible and resume-exact. Each example keeps its own
+  `main()`, sampler, and diagnostics; `fit` takes a `(step) -> Batch` thunk, which
+  the online samplers and the `data.py` `PoolReader` both satisfy (one training path).
+- [data.py](data.py): optional offline sharded data pool (generate → save → train)
+  for the expensive examples (GP-1D, BO). `write_pool` caches only the per-instance
+  physics; `PoolReader` reads it back through the same `assemble` the online path
+  uses, recomputing the context/target split and reveal mask from a stateless
+  `(seed, position)` hash (batch-size-independent, resume-exact). A manifest carries
+  the `variables()` schema and a DGP config-hash as the staleness guard. Build with
+  `python data.py <gp1d|bo1d> --out DIR --pool-size N`.
 - [gaussian_toy.py](gaussian_toy.py): Gaussian ACEP toy with two bounded
   continuous latents, runtime Beta information tokens, online
   training/evaluation CLI, analytic grid posterior, posterior predictive,
@@ -112,9 +121,10 @@ All four examples share the training flags defined in [train.py](train.py):
 
 - `--lr-schedule {cosine,constant}` (default `cosine`) and `--warmup N`.
 - `--resume <ckpt>` and `--ckpt-every N` for simple resume. A resumable checkpoint
-  carries optimizer/scheduler/step; resume with the **same** `--steps` the run was
-  started with (the cosine curve is sized to the total budget). The data RNG is not
-  checkpointed, so a resumed run's batches differ from an uninterrupted one.
+  carries optimizer/scheduler/step; resume with the **same** `--steps` (and batch size)
+  the run was started with (the cosine curve is sized to the total budget). The data
+  stream is a pure function of `(seed, step)`, so a resumed run replays the exact same
+  batches as an uninterrupted one.
 - `--config run.yaml` loads defaults from a YAML file; explicit CLI flags still win
   (precedence: example defaults < `--config` < CLI). YAML keys are the argument names
   with underscores; unknown keys are rejected and values are coerced/validated like CLI
@@ -136,6 +146,28 @@ All four examples share the training flags defined in [train.py](train.py):
 
 The final `--save-checkpoint` is model-only (`cfg`/`seed`/`state_dict`) plus a `config`
 provenance record; it stays compatible with the playground exporter and older checkpoints.
+
+### Offline data generation (GP-1D, BO)
+
+The GP-1D and BO examples can train from a pre-generated **offline pool** instead of
+sampling online — the generate → save → train pattern, for the two examples whose
+per-instance physics (GP Cholesky / optimum planting) is the expensive part. Gaussian
+and SIR are cheap and stay online-only.
+
+```powershell
+# generate a pool (CPU; shards + a manifest under the output dir)
+.\.venv\Scripts\python.exe data.py gp1d --out artifacts\pool_gp --pool-size 100000
+# train from it (identical diagnostics; --pool replaces online sampling)
+.\.venv\Scripts\python.exe gp1d.py --pool artifacts\pool_gp --steps 20000 --save-checkpoint artifacts\gp1d.pt
+```
+
+Only the expensive physics draws are cached; the context/target split and the reveal
+mask are recomputed at read time from a stateless `(seed, position)` hash, so the pool is
+independent of batch size and the reveal strategy, and a pooled run is **resume-exact**.
+The manifest records the `variables()` schema (a hard compatibility gate) and a hash of
+the data-generating constants; training from a pool built under different DGP constants is
+refused unless you pass `--pool-force`. Pools live under gitignored `artifacts/`; size
+them so `steps * batch_size` is a few passes over `--pool-size`.
 
 ### Gaussian ACEP
 

@@ -20,11 +20,16 @@ What this module owns:
 - `save_checkpoint()` / `load_checkpoint()` / `load_train_state()`.
 
 No prefetch, by design. Examples generate batches online; `fit` pulls one
-`Batch` per step from a `sample_batch: () -> Batch` thunk and reads it
+`Batch` per step from a `sample_batch: (step) -> Batch` thunk and reads it
 synchronously. The expensive work (e.g. GP Cholesky) is inside the thunk, not on
-a separate producer, so there is nothing to prefetch. A future sharded `data.py`
-reader would expose the same `() -> Batch` interface, so `fit` needs no second
+a separate producer, so there is nothing to prefetch. The sharded `data.py`
+`PoolReader` exposes the same `(step) -> Batch` interface, so `fit` needs no second
 code path. (See DEVLOG "Training / ops".)
+
+`fit` reseeds the global RNG with `mix_seed(seed, step)` at the top of every step,
+so each batch is a pure function of `(seed, step)`: reproducible, resume-exact, and
+independent of model-init RNG consumption. (This supersedes the old "data RNG is not
+checkpointed" caveat -- the online stream is now step-keyed, not a continuous draw.)
 
 Checkpoint format is backward compatible: `save_checkpoint` always writes
 `{cfg, seed, state_dict}`, optionally `config` (resolved-run provenance), and
@@ -45,7 +50,7 @@ from typing import Callable, Sequence
 
 import torch
 
-from ace import ACE, ACEConfig, Batch, Variable
+from ace import ACE, ACEConfig, Batch, Variable, mix_seed
 
 
 # --------------------------------------------------------------------------- #
@@ -308,7 +313,7 @@ def load_train_state(payload: dict, opt: torch.optim.Optimizer, sched=None) -> i
 
 def fit(
     model: ACE,
-    sample_batch: Callable[[], Batch],
+    sample_batch: Callable[[int], Batch],
     cfg: TrainConfig,
     *,
     resume_state: dict | None = None,
@@ -316,18 +321,22 @@ def fit(
     checkpoint_path: str | Path | None = None,
     ckpt_every: int = 0,
 ) -> ACE:
-    """Train `model` online; one `Batch` per step from `sample_batch()`.
+    """Train `model` online; one `Batch` per step from `sample_batch(step)`.
 
-    Adam + grad clip, with constant or cosine LR per `cfg.lr_schedule`. With
-    `resume_state` (a checkpoint payload carrying optimizer/scheduler/step), the
-    optimizer + scheduler state are restored and training continues from the saved
-    step (keep the same `--steps` so the cosine curve aligns). The data RNG is not
-    checkpointed, so a resumed run's batch stream differs from an uninterrupted one
-    (DEVLOG "simple resume").
+    Adam + grad clip, with constant or cosine LR per `cfg.lr_schedule`. At the top of
+    every step `fit` calls `torch.manual_seed(mix_seed(seed, step))`, so the batch at a
+    given step is a pure function of `(seed, step)`: a from-scratch run is reproducible,
+    a resumed run replays the *exact* same stream as an uninterrupted one (the reseed is
+    stateless in `step`), and the stream does not depend on how much RNG model
+    construction consumed.
 
-    Seeding is the caller's job (set `torch.manual_seed` before `build_model`); `fit`
-    draws no RNG before the first `sample_batch()`, so the from-scratch RNG timing
-    matches a single inline loop.
+    With `resume_state` (a checkpoint payload carrying optimizer/scheduler/step), the
+    optimizer + scheduler state are restored and training continues from the saved step
+    (keep the same `--steps` so the cosine curve aligns).
+
+    Seeding for model construction is the caller's job (set `torch.manual_seed` before
+    `build_model`); `fit`'s per-step reseed governs only the data stream, and ACE's
+    forward has no stochastic ops, so reseeding mid-loop is safe.
 
     If `checkpoint_path` is set and `ckpt_every > 0`, a *resumable* checkpoint is
     written there every `ckpt_every` steps (overwritten by the caller's final
@@ -352,7 +361,8 @@ def fit(
                 )
 
     for step in range(start_step, cfg.steps + 1):
-        batch = sample_batch()
+        torch.manual_seed(mix_seed(seed, step))  # batch(step) = f(seed, step): reproducible + resume-exact
+        batch = sample_batch(step)
         loss = model.loss(batch, data_weight=cfg.data_weight, latent_weight=cfg.latent_weight)
         opt.zero_grad(set_to_none=True)
         loss.backward()

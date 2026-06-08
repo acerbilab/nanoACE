@@ -108,10 +108,12 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   and bounded continuous latent samples as zero-spread `PRIOR` tokens, then repeating.
 - **Training spine (`train.py`).** The four examples share one loop, checkpoint format,
   `build_model`, and a `common_parser()` argparse parent (with a light-YAML `--config`
-  layered under explicit CLI flags). `fit` takes a `() -> Batch` thunk (online today; a
-  sharded `data.py` reader later — so no second code path), runs Adam + grad-clip with
-  cosine LR (default; `--lr-schedule constant` reproduces the old loop) and supports
-  simple resume (`--resume`/`--ckpt-every`). Each example keeps its own `main()`, sampler,
+  layered under explicit CLI flags). `fit` reseeds the global RNG with `mix_seed(seed, step)`
+  each step (so each batch is a pure function of `(seed, step)`: reproducible + resume-exact)
+  and takes a `(step) -> Batch` thunk, which the online samplers and the `data.py` `PoolReader`
+  both satisfy (one training path). It runs Adam + grad-clip with cosine LR (default;
+  `--lr-schedule constant` reproduces the old loop) and supports simple resume
+  (`--resume`/`--ckpt-every`). Each example keeps its own `main()`, sampler,
   `evaluate`, `plot_diagnostic`, and a 2-arg `load_checkpoint(path, device)` wrapper (the
   contract the playground calls). Checkpoints are `{cfg, seed, state_dict}` plus optional
   `config` provenance and optional `{optimizer, scheduler, step}` for resume — all
@@ -135,7 +137,15 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   and a uniform count (`k` in `1..L`) then a uniform size-`k` subset. All four examples
   (`gaussian_toy`, `gp1d`, `sbi_sir`, `bo1d`) share it via `latent_context_prob`
   (= P(reveal anything), default 0.5), so conditioning on any subset of latents — including
-  multi-pin — is in-distribution.
+  multi-pin — is in-distribution. The offline `data.py` reader uses `reveal_mask_from_index`,
+  a stateless index-keyed variant that reproduces the same distribution.
+- **Offline pool: frozen physics vs free split.** A `data.py` pool caches only an example's
+  `draw_instances` physics plus its `gen_config` (the DGP constants — hashed; changing them
+  needs a regenerate). The context/target split (GP-1D and BO use **complement-targets**:
+  every non-context point is a target, `n_target = N_TOTAL - n_context`) and the reveal mask
+  are recomputed at read time from a stateless `(seed, position)` hash, so batch size,
+  `--steps`, and the reveal strategy can all change without regenerating. `N_TOTAL` counts
+  data points only; latent tokens are separate columns on top.
 - **Data values remain task-scaled.** Data values should generally be scaled around
   `[-1, 1]` at generation time. This is a soft convention, not clipping: Gaussian and
   GP samples can have stochastic tails outside that range, which may matter when reading
@@ -155,9 +165,10 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   the executable GP regression example, `sbi_sir.py` for the executable SIR
   simulation-based-inference example, `bo1d.py` for the executable 1D Bayesian
   optimization example (optimum latents + runtime prior injection, no oracle), and
-  `diagnostics.py` for grid queries. `data.py` (the sharded saved-pool path) is planned in
-  DEVLOG "Layout" but not yet built (`train.fit` already takes a `() -> Batch` source so it
-  slots in later).
+  `diagnostics.py` for grid queries, and `data.py` for the optional offline sharded pool
+  (`write_pool` + `PoolReader`, GP-1D and BO only; generate → save → train). GP-1D and BO
+  split their sampler into `draw_instances` (cached physics) + `assemble` (RNG-free
+  tokenization shared by the online and pooled paths); Gaussian and SIR stay online-only.
 - **`playground/` is a non-core example, not part of the core.** It is a Vite + TypeScript
   in-browser demo that reimplements `ace.py`'s forward pass in TS (parity-tested against
   the PyTorch model) so trained checkpoints run client-side. Current tabs cover GP-1D,

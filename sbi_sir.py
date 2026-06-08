@@ -708,7 +708,7 @@ def main() -> None:
         )
         model = train.fit(
             model,
-            lambda: sample_sir_batch(
+            lambda step: sample_sir_batch(
                 model.variables,
                 batch_size=args.batch_size,
                 max_context=args.max_context,

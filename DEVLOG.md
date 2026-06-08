@@ -9,6 +9,78 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-08 — Offline data pool (`data.py`) + per-step reseed (stateless reproducibility)
+
+Full plan + verification log: [docs/plans/PLAN-offline-data-and-reseed.md](docs/plans/PLAN-offline-data-and-reseed.md).
+
+Builds the long-deferred `data.py` (the "Layout" section) as the smallest sharded-pool
+reader that honors the layout invariants, and uniformizes training reproducibility. This
+**supersedes** the "future sharded saved-pool path" framing in the "Layout" / "Data layer"
+sections (now built) and the "data RNG is not checkpointed" caveat from the train-loop
+extraction entry.
+
+- **Per-step reseed; `(step) -> Batch`.** `fit` now calls `torch.manual_seed(mix_seed(seed,
+  step))` at the top of every step, so each batch is a pure function of `(seed, step)`:
+  from-scratch runs reproduce, resumed runs replay the *exact* stream of an uninterrupted
+  run, and the stream no longer depends on how much RNG model construction consumed.
+  `mix_seed` is a splitmix64 hash (decorrelates consecutive step seeds); one `manual_seed`
+  covers CPU + CUDA, sidestepping the dual-RNG-state fragility that made RNG-*state*
+  checkpointing unattractive. The sampler thunk changed `() -> Batch` → `(step) -> Batch`
+  (online thunks ignore `step`; the pool reader uses it).
+  - **Reverses the earlier "keep online bit-identical" intent, deliberately.** Step-keyed
+    reseeding changes the online stream vs the old continuous draw, so artifacts trained
+    under the old stream are no longer seed-reproducible under the new code — fine
+    (regenerable; the retrain/re-export is deferred). Verified on CPU: two same-seed runs
+    give identical weights (max|dW|=0), and 0→20 vs 0→10-then-resume→20 give identical
+    weights (max|dW|=0).
+  - **Why stateless, not RNG-state checkpointing.** Reproducible resume comes from the
+    stream being a pure function of an index (the modern PRNG-key approach) — robust across
+    CPU/CUDA and device counts, where snapshotting `get_rng_state()` is fragile and only
+    approximate on nondeterministic CUDA kernels anyway.
+
+- **`draw`/`assemble` split (GP-1D, BO).** Each sampler splits into `draw_instances` (the
+  expensive CPU-float64 physics — GP Cholesky / Matheron planting — the only part worth
+  caching) and `assemble` (RNG-free tokenization, shared verbatim by the online and pooled
+  paths). Done in two steps: first preserving RNG draw order so it was **bit-identical** to
+  the pre-split online stream (proving the refactor introduced no bug; verified max|dW|=0),
+  then the behavioral change below. Gaussian and SIR stay monolithic / online-only — their
+  draws are cheap, so a pool buys nothing and the split would be churn.
+
+- **Complement-targets.** GP-1D and BO moved from a fixed `data_targets` count to the
+  standard "targets = all non-context points" (`n_target = N_TOTAL - n_context`,
+  `N_TOTAL = 64` data points, `min_context=1`/`max_context=20`): no drawn point is wasted,
+  and it is the natural pool layout. Tensorized as a width-`max_context` context block and a
+  width-`N_TOTAL` target block (masked `>= n_context`), so context self-attention stays
+  O(`max_context`²) and only the target cross-attention grows. `--data-targets` is now a
+  no-op for GP/BO (still used by Gaussian/SIR). This is a training-distribution change (a
+  retrain is expected eventually). Verified `n_target ∈ [44, 63]` and ≥1 context always
+  (GP min 1; BO min 3, since its two optimum PRIOR tokens are always in context).
+
+- **`data.py` = `write_pool` + `PoolReader`, one provenance check.** A pool stores only
+  `draw_instances`'s struct-of-arrays (continuous float32; GP's categorical `kernel` int64)
+  plus a manifest. The reader returns `Batch`es through the example's own `assemble`,
+  recomputing the split (`n_context`) and reveal (`reveal_mask_from_index`) from a stateless
+  `mix_int64`-keyed hash of the **absolute logical position** `p = (step-1)*B + j` — which is
+  batch-size- and steps-independent (position `p` is the same dataset under any `B`), so the
+  split stream is reproducible and resume-exact (verified max|dW|=0; B-independence verified
+  for `n_context`, reveal, and physical row). The "both" shuffle (shard order + within-shard)
+  is keyed on `(seed, pass)`. Build is resumable (per-shard `mix_seed`, skip valid shards,
+  atomic write, manifest last).
+  - **Kept: a single DGP config-hash.** The manifest carries the `variables()` schema (a hard
+    gate — a wrong schema silently misreads the arrays; not overridable) and a `sha256` of
+    the DGP `gen_config` (the non-schema constants; refused on mismatch, overridable with
+    `--pool-force`). **Rejected: the multi-axis resume-guard matrix** — that is
+    experiment-management machinery for a comparative study, which nanoACE is not.
+  - **Frozen-in-pool vs free-at-assemble.** Frozen (regenerate to change): the DGP physics +
+    `gen_config`. Free (no regenerate): batch size, `--steps`, and the reveal strategy /
+    `latent_context_prob`. The CLI DGP-constant flags (`--jitter`, BO `--sigma-obs`/
+    `--sigma-f-max`/`--prior-uniform-mix`) are wired to the same `GEN_*` constants
+    `gen_config()` reports, so online and pool share one source of truth.
+  - **Simplification.** `PoolReader` loads the whole pool into RAM (shard files remain the
+    on-disk artifact); streaming shards to scale past RAM is a deliberate non-goal.
+
+---
+
 ## 2026-06-08 - Current retained playground model state
 
 - **Current retained runs.** The public playground weights are exported from

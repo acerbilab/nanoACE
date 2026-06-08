@@ -132,6 +132,24 @@ def decode_token_values(variables: Sequence[Variable], var_id: torch.Tensor, val
     return out
 
 
+def mix_seed(seed: int, step: int) -> int:
+    """Per-step training seed: a splitmix64 hash of `(seed, step)` in `[0, 2**63)`.
+
+    `train.fit` reseeds the global RNG with this at the top of every step, so each
+    training batch is a pure function of `(seed, step)` -- reproducible, resume-exact,
+    and independent of how much RNG model construction consumed. Mixing decorrelates
+    consecutive step seeds (raw consecutive integers can correlate in some PRNGs). The
+    `[0, 2**63)` range is safe for `torch.manual_seed` on CPU and CUDA.
+    """
+
+    mask = (1 << 64) - 1
+    z = (int(seed) * 0x9E3779B97F4A7C15 + int(step) + 1) & mask
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & mask
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & mask
+    z ^= z >> 31
+    return (z & mask) >> 1
+
+
 def sample_reveal_mask(
     n_latents: int,
     batch_size: int,
@@ -178,6 +196,71 @@ def sample_reveal_mask(
     count_mask = ranks < k[:, None]
 
     use_count = torch.rand(batch_size, device=device) < 0.5
+    mask = torch.where(use_count[:, None], count_mask, subset_mask)
+    return mask & reveal_any[:, None]
+
+
+def mix_int64(x: torch.Tensor) -> torch.Tensor:
+    """Vectorized splitmix64-style integer mixer for stateless, index-keyed randomness.
+
+    Maps an int64 tensor of "codes" to well-mixed int64 outputs (good avalanche even for
+    consecutive inputs, like splitmix64). The offline `data.py` reader and
+    `reveal_mask_from_index` use it to derive deterministic per-`(seed, position)`
+    randomness without a stateful generator. Integer overflow wraps (int64), as intended.
+    """
+
+    x = x.to(torch.int64)
+    x = x ^ (x >> 30)
+    x = x * 3935559000370003845
+    x = x ^ (x >> 28)
+    x = x * 2691343689449507681
+    x = x ^ (x >> 31)
+    return x
+
+
+def _u01_from_codes(codes: torch.Tensor) -> torch.Tensor:
+    """Map an int64 "codes" tensor to uniform float64 in `[0, 1)` via `mix_int64`."""
+
+    b = mix_int64(codes) & ((1 << 53) - 1)
+    return b.to(torch.float64) / float(1 << 53)
+
+
+def reveal_mask_from_index(idx: torch.Tensor, n_latents: int, q: float) -> torch.Tensor:
+    """Stateless, index-keyed reveal mask matching `sample_reveal_mask`'s *distribution*.
+
+    `idx` is an int64 tensor of absolute stream positions (shape `[B]`); returns
+    `bool[B, n_latents]`. The result is a pure function of `idx` -- so it is batch-size-
+    and order-independent -- and reproduces the shared mixture DGP of `sample_reveal_mask`:
+    reveal nothing with probability `q`, else a 50/50 blend of uniform-over-subsets and
+    uniform-over-count. Used by the offline `data.py` reader; the online path keeps the
+    global-RNG `sample_reveal_mask`. Distinct small offsets index independent splitmix
+    streams (splitmix decorrelates consecutive seeds by design).
+    """
+
+    if not 0.0 <= q <= 1.0:
+        raise ValueError(f"reveal q must be in [0, 1], got {q}")
+    if not 1 <= n_latents <= 62:
+        raise ValueError("n_latents must be in [1, 62] for int64 bitmask sampling")
+    idx = idx.to(torch.int64)
+    device = idx.device
+    ar = torch.arange(n_latents, device=device, dtype=torch.int64)
+
+    reveal_any = _u01_from_codes(idx + 1) >= q
+
+    # Scheme A: uniform over the 2^L - 1 non-empty subsets, via an integer bitmask.
+    n_subsets = (1 << n_latents) - 1
+    codes = (_u01_from_codes(idx + 2) * n_subsets).floor().to(torch.int64).clamp_(0, n_subsets - 1) + 1
+    bits = 1 << ar
+    subset_mask = (codes[:, None] & bits[None, :]) > 0
+
+    # Scheme B: count k uniform in 1..L, then a uniform size-k subset via ranked per-latent scores.
+    k = (_u01_from_codes(idx + 3) * n_latents).floor().to(torch.int64).clamp_(0, n_latents - 1) + 1
+    grid = mix_int64(idx + 4)[:, None] + ar[None, :]
+    scores = _u01_from_codes(grid)
+    ranks = scores.argsort(dim=1).argsort(dim=1)
+    count_mask = ranks < k[:, None]
+
+    use_count = _u01_from_codes(idx + 5) < 0.5
     mask = torch.where(use_count[:, None], count_mask, subset_mask)
     return mask & reveal_any[:, None]
 

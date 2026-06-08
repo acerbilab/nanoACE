@@ -34,6 +34,7 @@ from pathlib import Path
 
 import torch
 
+import data
 import train
 from ace import ACE, Batch, PRIOR, PRIOR_FEATURES, QUERY, VALUE, Tokens, Variable, encode_value, sample_reveal_mask
 from diagnostics import normalized_moments, query_log_density, repeat_tokens
@@ -42,6 +43,8 @@ from diagnostics import normalized_moments, query_log_density, repeat_tokens
 KERNELS = ("RBF", "Matern12", "Matern32", "Periodic")
 LOG_LENGTHSCALE_RANGE = (math.log(0.12), math.log(0.80))
 LOG_OUTPUTSCALE_RANGE = (math.log(0.25), math.log(1.00))
+N_TOTAL = 64  # data observation points per instance (context + targets); the pool's [n, N_TOTAL] data width
+GEN_JITTER = 1e-5  # frozen Cholesky jitter for an offline pool (also the --jitter CLI default)
 EVAL_KERNEL = 3
 EVAL_LOG_LENGTHSCALE = math.log(0.28)
 EVAL_LOG_OUTPUTSCALE = math.log(0.75)
@@ -203,70 +206,86 @@ def draw_gp(
     return torch.bmm(chol, eps).squeeze(-1)
 
 
-def sample_gp_batch(
-    vars_: list[Variable],
-    *,
-    batch_size: int,
-    max_context: int,
-    min_context: int,
-    data_targets: int,
-    device: torch.device | str,
-    latent_context_prob: float,
-    jitter: float,
-) -> GPBatch:
-    """Sample one online GP-1D training batch."""
+def draw_instances(n_instances: int, *, n_points: int, jitter: float) -> dict[str, torch.Tensor]:
+    """Draw the expensive GP physics for `n_instances` tasks (CPU float64, no tokens).
 
-    total = max_context + data_targets
-    x_cpu = 2.0 * torch.rand(batch_size, total, dtype=torch.float64) - 1.0
-    log_ell_cpu = torch.empty(batch_size, dtype=torch.float64).uniform_(*LOG_LENGTHSCALE_RANGE)
-    log_scale_cpu = torch.empty(batch_size, dtype=torch.float64).uniform_(*LOG_OUTPUTSCALE_RANGE)
-    kernel_cpu = torch.randint(0, len(KERNELS), (batch_size,), dtype=torch.long)
-    y_cpu = draw_gp(x_cpu, kernel_cpu, log_ell_cpu, log_scale_cpu, jitter=jitter)
+    Struct-of-arrays, one row per instance, `n_points` observation points each. RNG draw
+    order is `x -> log_ell -> log_scale -> kernel -> y`; keep it stable so the online path
+    (post per-step reseed) matches the old monolithic sampler. The split / reveal /
+    tokenization is `assemble`'s job; this physics is the only part a `data.py` pool caches.
+    """
+
+    x = 2.0 * torch.rand(n_instances, n_points, dtype=torch.float64) - 1.0
+    log_ell = torch.empty(n_instances, dtype=torch.float64).uniform_(*LOG_LENGTHSCALE_RANGE)
+    log_scale = torch.empty(n_instances, dtype=torch.float64).uniform_(*LOG_OUTPUTSCALE_RANGE)
+    kernel = torch.randint(0, len(KERNELS), (n_instances,), dtype=torch.long)
+    y = draw_gp(x, kernel, log_ell, log_scale, jitter=jitter)
+    return {"x": x, "y": y, "log_ell": log_ell, "log_scale": log_scale, "kernel": kernel}
+
+
+def assemble(
+    inst: dict[str, torch.Tensor],
+    *,
+    variables: list[Variable],
+    n_context: torch.Tensor,
+    reveal_mask: torch.Tensor,
+    max_context: int,
+    device: torch.device | str,
+) -> Batch:
+    """Tokenize drawn GP instances into an ACE `Batch` (RNG-free).
+
+    `n_context` (`[B]`) and `reveal_mask` (`[B, 3]`) are decided by the caller -- the online
+    path draws them from the global RNG, the offline `data.py` reader from a stateless index
+    hash -- so this function is deterministic given its inputs and shared by both. The first
+    `max_context` points are context candidates (the first `n_context` active); **targets are
+    all non-context points** (`n_target = n_points - n_context`). Tensorize with the context
+    block of width `max_context` and the target block of width `n_points` (masked
+    `>= n_context`), so context self-attention stays O(`max_context`^2) and only the target
+    cross-attention grows. Revealed continuous latents become zero-spread PRIOR tokens, a
+    revealed kernel a VALUE label; the rest are queried. CPU-native `inst` physics is moved
+    to `device` as float32 here.
+    """
 
     device = torch.device(device)
-    x = x_cpu.float().to(device)
-    y = y_cpu.float().to(device)
-    log_ell = log_ell_cpu.float().to(device)
-    log_scale = log_scale_cpu.float().to(device)
-    log_ell_internal = encode_value(vars_[1], log_ell)
-    log_scale_internal = encode_value(vars_[2], log_scale)
-    kernel = kernel_cpu.to(device)
+    b = int(inst["x"].shape[0])
+    n_points = int(inst["x"].shape[1])
+    if not 1 <= max_context < n_points:
+        raise ValueError(f"need 1 <= max_context ({max_context}) < n_points ({n_points}) for >=1 target")
+    x = inst["x"].float().to(device)
+    y = inst["y"].float().to(device)
+    log_ell = inst["log_ell"].float().to(device)
+    log_scale = inst["log_scale"].float().to(device)
+    kernel = inst["kernel"].to(device)
+    log_ell_internal = encode_value(variables[1], log_ell)
+    log_scale_internal = encode_value(variables[2], log_scale)
 
-    n_ctx = torch.randint(min_context, max_context + 1, (batch_size,), device=device)
-    ar = torch.arange(max_context, device=device)[None, :]
-    # Reveal a subset of the three latents as exact context via the shared mixture
-    # DGP (sample_reveal_mask: prob q reveal nothing, else mixed uniform-subset /
-    # uniform-count). Revealed latents are exact context tokens (continuous ->
-    # zero-spread PRIOR, kernel -> VALUE label); the rest are queried. See
-    # ace.sample_reveal_mask and DEVLOG "shared reveal strategy".
-    reveal_mask = sample_reveal_mask(3, batch_size, q=1.0 - latent_context_prob, device=device)
-    reveal_ell = reveal_mask[:, 0]
-    reveal_scale = reveal_mask[:, 1]
-    reveal_kernel = reveal_mask[:, 2]
+    reveal_ell, reveal_scale, reveal_kernel = reveal_mask[:, 0], reveal_mask[:, 1], reveal_mask[:, 2]
 
+    # Context: first max_context points are candidates; the first n_context are active.
     ctx_t = max_context + 3
     ell_pos, scale_pos, kernel_pos = max_context, max_context + 1, max_context + 2
-    ctx_var = torch.zeros(batch_size, ctx_t, device=device, dtype=torch.long)
+    ctx_var = torch.zeros(b, ctx_t, device=device, dtype=torch.long)
     ctx_var[:, ell_pos] = 1
     ctx_var[:, scale_pos] = 2
     ctx_var[:, kernel_pos] = 3
-    ctx_x = torch.zeros(batch_size, ctx_t, 1, device=device)
+    ctx_x = torch.zeros(b, ctx_t, 1, device=device)
     ctx_x[:, :max_context, 0] = x[:, :max_context]
-    ctx_value = torch.zeros(batch_size, ctx_t, device=device)
+    ctx_value = torch.zeros(b, ctx_t, device=device)
     ctx_value[:, :max_context] = y[:, :max_context]
     ctx_value[:, ell_pos] = log_ell_internal
     ctx_value[:, scale_pos] = log_scale_internal
     ctx_value[:, kernel_pos] = kernel.float()
-    ctx_index = torch.zeros(batch_size, ctx_t, device=device, dtype=torch.long)
+    ctx_index = torch.zeros(b, ctx_t, device=device, dtype=torch.long)
     ctx_index[:, kernel_pos] = kernel
-    ctx_prior = torch.zeros(batch_size, ctx_t, PRIOR_FEATURES, device=device)
+    ctx_prior = torch.zeros(b, ctx_t, PRIOR_FEATURES, device=device)
     ctx_prior[:, ell_pos, 0] = log_ell_internal
     ctx_prior[:, scale_pos, 0] = log_scale_internal
-    ctx_mode = torch.full((batch_size, ctx_t), VALUE, device=device)
+    ctx_mode = torch.full((b, ctx_t), VALUE, device=device)
     ctx_mode[:, ell_pos] = PRIOR
     ctx_mode[:, scale_pos] = PRIOR
-    ctx_mask = torch.zeros(batch_size, ctx_t, device=device, dtype=torch.bool)
-    ctx_mask[:, :max_context] = ar < n_ctx[:, None]
+    ctx_mask = torch.zeros(b, ctx_t, device=device, dtype=torch.bool)
+    ctx_ar = torch.arange(max_context, device=device)[None, :]
+    ctx_mask[:, :max_context] = ctx_ar < n_context[:, None]
     ctx_mask[:, ell_pos] = reveal_ell
     ctx_mask[:, scale_pos] = reveal_scale
     ctx_mask[:, kernel_pos] = reveal_kernel
@@ -280,33 +299,70 @@ def sample_gp_batch(
         prior=ctx_prior,
     )
 
-    tgt_t = 3 + data_targets
-    tgt_var = torch.zeros(batch_size, tgt_t, device=device, dtype=torch.long)
+    # Target: all non-context points (mask >= n_context) plus the 3 latent queries.
+    tgt_t = n_points + 3
+    tgt_var = torch.zeros(b, tgt_t, device=device, dtype=torch.long)
     tgt_var[:, 0] = 1
     tgt_var[:, 1] = 2
     tgt_var[:, 2] = 3
-    tgt_x = torch.zeros(batch_size, tgt_t, 1, device=device)
-    tgt_x[:, 3:, 0] = x[:, max_context:]
-    tgt_value = torch.zeros(batch_size, tgt_t, device=device)
+    tgt_x = torch.zeros(b, tgt_t, 1, device=device)
+    tgt_x[:, 3:, 0] = x
+    tgt_value = torch.zeros(b, tgt_t, device=device)
     tgt_value[:, 0] = log_ell_internal
     tgt_value[:, 1] = log_scale_internal
     tgt_value[:, 2] = kernel.float()
-    tgt_value[:, 3:] = y[:, max_context:]
-    tgt_index = torch.zeros(batch_size, tgt_t, device=device, dtype=torch.long)
+    tgt_value[:, 3:] = y
+    tgt_index = torch.zeros(b, tgt_t, device=device, dtype=torch.long)
     tgt_index[:, 2] = kernel
-    tgt_mask = torch.ones(batch_size, tgt_t, device=device, dtype=torch.bool)
+    tgt_mask = torch.ones(b, tgt_t, device=device, dtype=torch.bool)
     tgt_mask[:, 0] = ~reveal_ell
     tgt_mask[:, 1] = ~reveal_scale
     tgt_mask[:, 2] = ~reveal_kernel
+    tgt_ar = torch.arange(n_points, device=device)[None, :]
+    tgt_mask[:, 3:] = tgt_ar >= n_context[:, None]
     target = make_tokens(
         var_id=tgt_var,
         x=tgt_x,
         value=tgt_value,
         value_index=tgt_index,
-        mode=torch.full((batch_size, tgt_t), QUERY, device=device),
+        mode=torch.full((b, tgt_t), QUERY, device=device),
         mask=tgt_mask,
     )
-    return GPBatch(Batch(vars_, context, target), x[:, :max_context], y[:, :max_context], x[:, max_context:], y[:, max_context:], log_ell, log_scale, kernel)
+    return Batch(variables, context, target)
+
+
+def online_batch(model: ACE, args: argparse.Namespace, device: torch.device | str) -> Batch:
+    """Draw + assemble one online GP-1D training batch (global RNG; see `assemble`)."""
+
+    inst = draw_instances(args.batch_size, n_points=N_TOTAL, jitter=args.jitter)
+    n_context = torch.randint(args.min_context, args.max_context + 1, (args.batch_size,), device=device)
+    reveal_mask = sample_reveal_mask(3, args.batch_size, q=1.0 - args.latent_context_prob, device=device)
+    return assemble(
+        inst,
+        variables=model.variables,
+        n_context=n_context,
+        reveal_mask=reveal_mask,
+        max_context=args.max_context,
+        device=device,
+    )
+
+
+def gen_config() -> dict:
+    """Frozen DGP constants that define an offline pool's identity (hashed; drift => regenerate)."""
+
+    return {
+        "kernels": list(KERNELS),
+        "log_lengthscale_range": list(LOG_LENGTHSCALE_RANGE),
+        "log_outputscale_range": list(LOG_OUTPUTSCALE_RANGE),
+        "N_TOTAL": N_TOTAL,
+        "jitter": GEN_JITTER,
+    }
+
+
+def draw_pool(n_instances: int) -> dict[str, torch.Tensor]:
+    """`draw_instances` bound to the frozen pool DGP config (used by `data.write_pool`)."""
+
+    return draw_instances(n_instances, n_points=N_TOTAL, jitter=GEN_JITTER)
 
 
 def load_checkpoint(path: str | Path, device: torch.device) -> ACE:
@@ -629,11 +685,12 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line options for the GP-1D example."""
 
     p = argparse.ArgumentParser(parents=[train.common_parser()], description="Train/evaluate the nanoACE GP-1D toy.")
+    # Targets are all non-context points (complement-targets); N_TOTAL is the point budget.
+    # `--data-targets` is inherited from common_parser but unused by GP-1D (no-op).
     p.set_defaults(
         batch_size=64,
-        max_context=14,
-        min_context=4,
-        data_targets=32,
+        max_context=20,
+        min_context=1,
         d_model=128,
         heads=4,
         layers=4,
@@ -644,7 +701,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-points", type=int, default=160)
     p.add_argument("--oracle-bins", type=int, default=64)
     p.add_argument("--oracle-chunk", type=int, default=512)
-    p.add_argument("--jitter", type=float, default=1e-5)
+    p.add_argument("--jitter", type=float, default=GEN_JITTER)
+    p.add_argument("--pool", default="", help="train from an offline data.py pool directory instead of online")
+    p.add_argument("--pool-force", action="store_true", help="reuse a pool despite a DGP config-hash mismatch")
     return train.apply_config_file(p)
 
 
@@ -669,18 +728,30 @@ def main() -> None:
         resume_state = (
             torch.load(args.resume, map_location=device, weights_only=False) if args.resume else None
         )
-        model = train.fit(
-            model,
-            lambda: sample_gp_batch(
-                model.variables,
+        if args.pool:
+            if args.jitter != GEN_JITTER:
+                raise SystemExit(
+                    f"--pool freezes the DGP (pool jitter={GEN_JITTER}); --jitter {args.jitter} would only "
+                    "affect diagnostics, not the cached training data. Regenerate the pool or drop --pool."
+                )
+            source = data.PoolReader(
+                args.pool,
+                assemble=assemble,
+                variables=model.variables,
+                gen_config=gen_config(),
                 batch_size=args.batch_size,
+                seed=args.seed,
                 max_context=args.max_context,
                 min_context=args.min_context,
-                data_targets=args.data_targets,
-                device=device,
                 latent_context_prob=args.latent_context_prob,
-                jitter=args.jitter,
-            ).batch,
+                device=device,
+                force=args.pool_force,
+            )
+        else:
+            source = lambda step: online_batch(model, args, device)
+        model = train.fit(
+            model,
+            source,
             train.TrainConfig.from_args(args),
             resume_state=resume_state,
             seed=args.seed,
