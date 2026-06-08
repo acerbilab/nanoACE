@@ -9,6 +9,19 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-08 - Current retained playground model state
+
+- **Current retained runs.** The public playground weights are exported from
+  retained runs under the shared multi-latent reveal DGP: Gaussian 80k steps,
+  GP-1D 200k, SIR 100k, and BO-1D 200k. The corresponding playground parity/demo
+  fixtures were regenerated together with those exports.
+- **Repository boundary unchanged.** `artifacts/` and `playground/public/models/`
+  remain gitignored in nanoACE; public deployment weights are versioned in the
+  separate `lacerbi/nanoACE-playground-weights` repository and copied in by the
+  Pages workflow.
+
+---
+
 ## 2026-06-08 - Playground UI polish and separate weights repo
 
 - **UI polish stayed inside the non-core playground.** The header now keeps the
@@ -59,7 +72,7 @@ Full plan and verification log: [docs/plans/PLAN-train-loop-extraction.md](docs/
   nothing to prefetch. The rationale the old "Training / ops" entry asked for now has a
   home (a module docstring note in `train.py`).
 - **Cosine LR is the new default** (`--lr-schedule {cosine,constant}`, `--warmup`). This
-  changes future *from-scratch retrains* vs the constant-LR committed artifacts — fine,
+  changes future *from-scratch retrains* vs the retained constant-LR artifacts — fine,
   artifacts are regenerable, and `--lr-schedule constant` exactly reproduces the old loop
   (used to prove the extraction is behaviour-preserving: all four examples reproduce their
   pre-refactor loss trajectories bit-for-bit under `constant`).
@@ -72,10 +85,10 @@ Full plan and verification log: [docs/plans/PLAN-train-loop-extraction.md](docs/
 - **Checkpoint format is backward compatible (additive keys).** `save_checkpoint` always
   writes `{cfg, seed, state_dict}`, adds `config` (resolved-run provenance, `vars(args)`)
   on the final save, and `{optimizer, scheduler, step}` only for resumable checkpoints.
-  `load_checkpoint` reads only `cfg`/`state_dict`; legacy three-key files (the committed
-  `artifacts/*.pt`) load unchanged, and `load_train_state` tolerates the resume keys being
-  absent. The **final `--save-checkpoint` stays model-only** (+`config`), so committed
-  artifacts and the playground stay lean.
+  `load_checkpoint` reads only `cfg`/`state_dict`; legacy three-key checkpoint files load
+  unchanged, and `load_train_state` tolerates the resume keys being absent. The **final
+  `--save-checkpoint` stays model-only** (+`config`), so retained artifacts and the
+  playground stay lean.
 - **The one playground constraint.** `playground/export_weights.py` and
   `playground/parity.py` call `<module>.load_checkpoint(path, device)` with two args and
   use `<module>.variables()`. So each example keeps a 2-arg `load_checkpoint(path, device)`
@@ -108,10 +121,6 @@ Full plan and verification log: [docs/plans/PLAN-train-loop-extraction.md](docs/
 - **No oracle, consistent with `bo1d.py`.** The tab does not add a browser-side simulator
   posterior or a BO rollout. It only exposes ACE's amortized predictions and conditioning
   interface. Verification is parity plus Python-orchestration fixtures, not truth-quality.
-- **Smoke artifact caveat.** `artifacts/bo1d.pt` generated during this wiring pass is a
-  tiny CPU checkpoint used to export browser weights and test the UI. It is not a quality
-  BO model; replace it with a long GPU-trained checkpoint and rerun export + parity
-  together when model quality matters.
 
 ---
 
@@ -146,19 +155,6 @@ L=2 → `{0:.50, 1:.29, 2:.21}`; L=3 → `{0:.50, 1:.19, 2:.19, 3:.12}` (verifie
   the data-`y` columns always active, so a both-revealed row still predicts data (the
   forward/simulate direction) — no empty-target row. Gaussian/GP already allowed
   reveal-all under the old scheme.
-- **Gaussian retrained under this DGP; GP-1D retrain still PENDING.** This change edited
-  only the DGP code, so the originally shipped checkpoints/blobs/fixtures were trained under
-  the *old* uniform-subset DGP. Gaussian has since been retrained (30k) under the shared
-  mixture DGP, with the playground weights re-exported and the parity/demo fixtures
-  regenerated together — so `artifacts/gaussian_toy.pt`, the Gaussian blob, and
-  `gaussian.{parity,demo}.json` now match this documented DGP (the regenerated Gaussian
-  fixtures are part of the SIR-tab changeset). GP-1D (100k) is the remaining tracked
-  follow-up: `artifacts/gp1d.pt`, its blob, and `gp1d.{parity,demo}.json` are still on the
-  old DGP. Nothing breaks either way (multi-pin was already in-distribution); always re-run
-  export + parity together (see the staleness gotcha).
-- **Eventual:** `sbi_sir.py` / `bo1d.py` have no committed checkpoint today; training real
-  SIR/BO checkpoints under this DGP is wanted eventually (not done here). Full plan:
-  [docs/plans/PLAN-shared-reveal-strategy.md](docs/plans/PLAN-shared-reveal-strategy.md).
 
 ---
 
@@ -263,14 +259,11 @@ the revised plan (see `docs/plans/PLAN-bo1d.md` "Review notes").
   defaults to `d_model=192`, **6 transformer blocks**, 16 heads, mlp 384, `K=12`
   (~3.9M params, vs the ~1.2M `gp1d`/Gaussian defaults). Six blocks were adopted
   deliberately (the 4-block default underfit the prior-integration); `K` is raised
-  from 8 to 12 for the multimodal location posterior. Still well short of the
-  paper's `5e5`-step budget -- CPU validation runs are necessarily undertrained;
-  real training is a GPU run. Observed at equal small CPU budgets the ~1.2M / 4-block
-  model used the runtime prior *more* than the ~3.9M / 6-block one (the bigger model
-  is more undertrained at equal steps), which confirms the bottleneck is training
-  budget, not capacity. The local CPU validation run is therefore a smoke test, not a
-  quality result; the `ε=0.05`-vs-`0.10` choice is likewise deferred to a proper
-  GPU run. Defaults kept faithful (6 blocks, `ε=0.05`) for that run.
+  from 8 to 12 for the multimodal location posterior. Small CPU validation runs
+  showed that equal-step comparisons were dominated by training budget rather
+  than capacity; judge retained playground behavior from the later exported run
+  recorded in the current-state entry, not from the wiring-time CPU checks.
+  Defaults kept faithful at 6 blocks and `ε=0.05`.
 - **Scope note.** This is example #4; "nano ships exactly two" (initial design) is
   already stretched by SIR. BO earns its place: it adds instance-level latents, the
   optimum-posterior headline, and the robust prior-injection mechanism, none of
@@ -292,10 +285,6 @@ the revised plan (see `docs/plans/PLAN-bo1d.md` "Review notes").
 - **Export/parity extended.** `playground/export_weights.py` accepts `--task sbi_sir`;
   `playground/parity.py` now writes SIR parity and demo fixtures; `npm test` covers the
   SIR forward parity, ACE orchestration, TS oracle, and UI smoke path.
-- **Artifact caveat.** The local `artifacts/sbi_sir.pt` generated during this work is a
-  short CPU smoke checkpoint for wiring/testing, not a quality playground model and not a
-  committed artifact. A proper SIR checkpoint under the shared reveal DGP remains a
-  follow-up, consistent with the shared-reveal entry above.
 
 ---
 
@@ -339,12 +328,6 @@ the revised plan (see `docs/plans/PLAN-bo1d.md` "Review notes").
   only the model directories into that path before the Vite build. This avoids
   committing binary churn to nanoACE while keeping the deployment flow same-build
   and explicit; update blobs and parity fixtures together after retraining.
-- **Multi-latent reveal follow-up moved to the shared-reveal entry.** This playground
-  section originally tracked making multi-pin conditioning in-distribution for the
-  Gaussian and GP demos, but the current source of truth is the "Single shared
-  multi-latent reveal strategy" entry above. The code now uses the shared mixture DGP
-  across all four examples; the Gaussian checkpoint, blob, and parity fixtures have since
-  been refreshed under that DGP, while the GP-1D ones are still **pending retrain/export**.
 
 ---
 
@@ -400,8 +383,7 @@ the revised plan (see `docs/plans/PLAN-bo1d.md` "Review notes").
 - **Multi-reveal migration (DONE 2026-06-07).** `sbi_sir.py` (and `bo1d.py`) were migrated
   off the single-reveal `xor` onto the shared `sample_reveal_mask`, so two-pin contexts are
   now in-distribution and all four examples share one reveal helper. See the "Single shared
-  multi-latent reveal strategy" entry above. (A real SIR/BO checkpoint under the new DGP
-  remains a tracked follow-up; none is committed today.)
+  multi-latent reveal strategy" entry above.
 
 ---
 
@@ -575,21 +557,13 @@ example.
   Cholesky jitter used by the sampler. The fixed context locations are irregular and
   clustered, including nearby pairs/triples, because sparse evenly spaced points do not
   say much about local roughness and make kernel/lengthscale inference mostly guesswork.
-- **Oracle grid sanity check.** The fixed GP diagnostic was rerun from the retained
-  checkpoint with `--oracle-bins 32`, `64`, and `96`. Kernel posterior probabilities,
+- **Oracle grid sanity check.** The fixed GP diagnostic was rerun with
+  `--oracle-bins 32`, `64`, and `96`. Kernel posterior probabilities,
   latent posterior moments, and predictive RMSE were stable to the printed precision,
   so the default 64-bin oracle is adequate for this diagnostic. The RBF integrated
   marginal likelihood delta moves by about 0.1 log units across those grids, but RBF has
   posterior mass near 0.002 in this case, so that movement is not practically relevant.
   This is a one-case numerical check, not a benchmark harness.
-- **Current retained GP artifact.** The retained `artifacts/gp1d.pt` / `artifacts/gp1d.png`
-  pair is a post-Beta-token-schema 100k-step online run. The fixed diagnostic uses a periodic generating
-  kernel. The numerical oracle still leaves real uncertainty: posterior mass is roughly
-  RBF 0.002, Matern-1/2 0.377, Matern-3/2 0.121, periodic 0.500. The checkpoint gives
-  roughly RBF 0.007, Matern-1/2 0.152, Matern-3/2 0.083, periodic 0.759. The
-  oracle-vs-ACE kernel KL is about 0.18; oracle predictive RMSE is about 0.35 and ACE
-  predictive RMSE is about 0.39. Treat the plot as an oracle-calibrated ambiguous
-  posterior, not as a hard truth-recovery example.
 
 ---
 

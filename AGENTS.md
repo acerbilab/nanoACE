@@ -135,9 +135,7 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   and a uniform count (`k` in `1..L`) then a uniform size-`k` subset. All four examples
   (`gaussian_toy`, `gp1d`, `sbi_sir`, `bo1d`) share it via `latent_context_prob`
   (= P(reveal anything), default 0.5), so conditioning on any subset of latents — including
-  multi-pin — is in-distribution. Note: Gaussian has been retrained + re-exported under this
-  DGP; the GP-1D checkpoint + playground blob are still pending a retrain (see DEVLOG "Single
-  shared multi-latent reveal strategy").
+  multi-pin — is in-distribution.
 - **Data values remain task-scaled.** Data values should generally be scaled around
   `[-1, 1]` at generation time. This is a soft convention, not clipping: Gaussian and
   GP samples can have stochastic tails outside that range, which may matter when reading

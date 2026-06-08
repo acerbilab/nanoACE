@@ -74,10 +74,15 @@ Implemented modules:
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Next work: inspect the retained GP-1D checkpoint's kernel calibration; tune the
-SIR diagnostic and model size against its grid oracle; tune the BO
-diagnostic/model size; and consider whether the shared prior path warrants a
-discrete-latent runtime prior.
+Current playground weights are hosted outside this repo in
+`lacerbi/nanoACE-playground-weights`. They are exported from retained runs under
+the shared multi-latent reveal DGP: Gaussian 80k steps, GP-1D 200k, SIR 100k, and
+BO-1D 200k. Local `artifacts/` and `playground/public/models/` remain gitignored
+in nanoACE.
+
+Next work: inspect the deployed Pages build against the public weights, add
+manifest-level training provenance on the next export, and consider whether the
+shared prior path warrants a discrete-latent runtime prior.
 
 ## Setup
 
