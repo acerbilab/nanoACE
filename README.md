@@ -5,7 +5,7 @@ nanoACE is a small, readable, and fully operational implementation of the
 treat data, interpretable latents, and runtime prior information as tokens;
 condition on one token set; predict distributions over another token set.
 
-The goal is reasonably self-contained source that a human or coding agent can
+The goal is a reasonably self-contained source that a human or coding agent can
 read end to end and extend. The original research code is stored in
 [this other repo](https://github.com/acerbilab/amortized-conditioning-engine/).
 
@@ -398,18 +398,3 @@ Tokens(
     mask: BoolTensor[B, T],
 )
 ```
-
-## Agent Notes
-
-Before making architectural changes, read [DEVLOG.md](DEVLOG.md). The project
-values local, readable code over benchmark machinery. In particular:
-
-- keep `ace.py` as the main readable implementation file;
-- if a gitignored `temp/` directory is present, treat it as archived external
-  experiment code and copy ideas only when they clearly fit this repository;
-- keep examples small and diagnostic;
-- prefer changing the implementation when a simpler or more robust tweak serves
-  ACE's conditioning interface better than paper fidelity.
-
-Generated directories such as `.venv/`, `__pycache__/`, `temp/`, and
-`artifacts/` are ignored.
