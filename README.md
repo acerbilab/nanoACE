@@ -74,10 +74,10 @@ Implemented modules:
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Next work: resolve playground weight hosting for Pages; inspect the retained GP-1D
-checkpoint's kernel calibration; tune the SIR diagnostic and model size against its
-grid oracle; tune the BO diagnostic/model size; and consider whether the shared
-prior path warrants a discrete-latent runtime prior.
+Next work: inspect the retained GP-1D checkpoint's kernel calibration; tune the
+SIR diagnostic and model size against its grid oracle; tune the BO
+diagnostic/model size; and consider whether the shared prior path warrants a
+discrete-latent runtime prior.
 
 ## Setup
 

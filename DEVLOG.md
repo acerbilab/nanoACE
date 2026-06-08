@@ -9,6 +9,27 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-08 - Playground UI polish and separate weights repo
+
+- **UI polish stayed inside the non-core playground.** The header now keeps the
+  title, short description, fullscreen control, and "What is ACE?" modal trigger
+  on one row; example controls expose reset/clear actions consistently, plus a
+  uniform-priors action where runtime priors exist. Out-of-distribution warnings
+  now render inside the plotting area so they do not move the surrounding layout.
+- **The ACE explainer modal is deliberately generalist.** It describes ACE as a
+  transformer probabilistic model in the same broad family as PFNs and TNPs, then
+  emphasizes the token-level extension: conditioning and prediction can apply to
+  data, interpretable latents, and runtime prior information, not only observed
+  input-output pairs.
+- **Playground weights live in a separate public repo.** The fp16 browser blobs
+  remain gitignored under `playground/public/models/` in nanoACE. GitHub Pages now
+  checks out `lacerbi/nanoACE-playground-weights` beside the app, copies only the
+  model directories into that path before building, then fails fast if any
+  expected `manifest.json`/`weights.bin` pair is missing. This keeps ordinary
+  nanoACE clones small while preserving a same-build checkout path for deployment.
+
+---
+
 ## 2026-06-08 — Shared `train.py` (loop + checkpoint + light-YAML config + resume)
 
 Full plan and verification log: [docs/plans/PLAN-train-loop-extraction.md](docs/plans/PLAN-train-loop-extraction.md).
@@ -308,14 +329,12 @@ the revised plan (see `docs/plans/PLAN-bo1d.md` "Review notes").
   to re-run export + parity.) **Always re-run `export_weights.py` and `parity.py`
   together after retraining**; a Python sanity assert on the freshly exported model
   (e.g. it tracks a smooth function) would catch this class of bug.
-- **Weight hosting is an open decision; blobs are not committed (parked).** The
-  exported fp16 blobs (`playground/public/models/`) are gitignored for now.
-  Options: commit them (~3.6 MB today, but binary churn grows with retrains and
-  more examples), Git LFS (keeps `.git` lean, still same-origin), or runtime fetch
-  from an external host such as HF (adds a CORS + browser-caching dependency and
-  risks the fetched weights drifting out of sync with the parity-pinned code, the
-  one integrity property this design leans on). Regenerate locally via
-  `export_weights.py` meanwhile. The Pages deploy is blocked until this resolves.
+- **Weight hosting is now resolved by a separate public repo.** The exported fp16
+  blobs (`playground/public/models/`) stay gitignored in nanoACE, and GitHub
+  Pages checks out `lacerbi/nanoACE-playground-weights` beside the app and copies
+  only the model directories into that path before the Vite build. This avoids
+  committing binary churn to nanoACE while keeping the deployment flow same-build
+  and explicit; update blobs and parity fixtures together after retraining.
 - **Multi-latent reveal follow-up moved to the shared-reveal entry.** This playground
   section originally tracked making multi-pin conditioning in-distribution for the
   Gaussian and GP demos, but the current source of truth is the "Single shared

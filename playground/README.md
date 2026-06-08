@@ -27,9 +27,11 @@ Four demos:
 
 ## Run locally
 
-The weight blobs are **not committed** (the hosting decision is parked — see
-"Weights" below). Generate them once from the checkpoints in `artifacts/` first,
-then run the dev server:
+The weight blobs are **not committed to nanoACE**. For local development, either
+copy/fetch them from the separate
+[nanoACE-playground-weights](https://github.com/lacerbi/nanoACE-playground-weights)
+repository into `playground/public/models/`, or regenerate them from checkpoints
+in `artifacts`:
 
 ```bash
 # from the repo root, using the project venv (generates public/models/*)
@@ -68,7 +70,7 @@ npm test           # vitest: parity + orchestration + UI smoke tests
 
 The models were trained on a bounded regime (`x, y ≈ [-1, 1]`, ≤ ~14 context
 points, with a random subset of latents sometimes revealed). The demos let you
-roam, but flag when you leave that regime (a banner names why). Pinning multiple
+roam, but flag when you leave that regime inside the main plot. Pinning multiple
 latents is now in-distribution for the current multi-reveal checkpoints. For
 GP-1D, a pins-only context with no observed data is still flagged because GP
 training used at least four data context points. SIR flags very sparse
@@ -76,12 +78,17 @@ observation sets because the training sampler used at least four data points.
 BO uses the same point-count/value guardrail style as GP, with prior-only
 contexts flagged because BO training used at least one observed point.
 
-## Weights (not committed — generate locally)
+## Weights
 
-The blobs under `public/models/<task>/` are **gitignored**: the
-weight-hosting decision (commit vs Git LFS vs external/HF fetch) is parked, and
-the demo may grow to more examples. They are produced from the checkpoints in the
-repo's `artifacts/` (also gitignored). From the project venv at the repo root:
+The blobs under `public/models/<task>/` are **gitignored in nanoACE** and hosted
+separately in
+[lacerbi/nanoACE-playground-weights](https://github.com/lacerbi/nanoACE-playground-weights)
+so ordinary nanoACE clones stay small. The Pages workflow checks out that
+repository beside the app and copies the model directories into
+`playground/public/models/` before building.
+
+To regenerate local blobs from checkpoints, use the project venv at the repo
+root:
 
 ```bash
 python playground/export_weights.py --task gp1d     --checkpoint artifacts/gp1d.pt        --out playground/public/models/gp1d
@@ -120,9 +127,10 @@ python playground/parity.py
 setup: repo **Settings → Pages → Source = GitHub Actions**. The production base
 path is `/nanoACE/` (set automatically in CI via `GITHUB_ACTIONS`).
 
-**Pending:** because the weights are not committed, the deploy is blocked until
-the hosting decision is made. The workflow fails fast if `public/models/` is
-missing, so it cannot publish a weightless demo by accident. Resolving it means
-one of: commit the blobs, use Git LFS (`lfs: true` on checkout), or have the demo
-fetch them at runtime. The checkpoints aren't in the repo either, so generating
-weights inside CI isn't currently an option.
+The deploy workflow checks out
+[lacerbi/nanoACE-playground-weights](https://github.com/lacerbi/nanoACE-playground-weights)
+beside the app, copies the model directories into `public/models/`, then fails
+fast if any expected manifest/blob is missing.
+To update the deployed models after retraining, regenerate/export weights and
+parity fixtures together, push the new blobs to the weights repo, then trigger
+the manual Pages workflow in nanoACE.
