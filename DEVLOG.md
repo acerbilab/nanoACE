@@ -13,11 +13,10 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 Full plan + verification log: [docs/plans/PLAN-offline-data-and-reseed.md](docs/plans/PLAN-offline-data-and-reseed.md).
 
-Builds the long-deferred `data.py` (the "Layout" section) as the smallest sharded-pool
-reader that honors the layout invariants, and uniformizes training reproducibility. This
-**supersedes** the "future sharded saved-pool path" framing in the "Layout" / "Data layer"
-sections (now built) and the "data RNG is not checkpointed" caveat from the train-loop
-extraction entry.
+Adds `data.py` as a sharded-pool reader that honors the layout invariants, and makes
+training reproducibility uniform. This updates the "Layout" / "Data layer" framing
+(the saved-pool path now exists) and the "data RNG is not checkpointed" caveat from the
+train-loop extraction entry.
 
 - **Per-step reseed; `(step) -> Batch`.** `fit` now calls `torch.manual_seed(mix_seed(seed,
   step))` at the top of every step, so each batch is a pure function of `(seed, step)`:
@@ -129,10 +128,8 @@ Full plan and verification log: [docs/plans/PLAN-train-loop-extraction.md](docs/
 - **Why.** The four examples carried byte-identical training loops, `build_model`,
   `save_checkpoint`/`load_checkpoint`, and ~21 overlapping CLI args. That boilerplate now
   lives in `train.py`; each example keeps only its task-specific science (`variables()`,
-  the batch sampler, `evaluate()`, `plot_diagnostic()`) and a thin `main()`. This is the
-  long-planned `train.py` from the "Layout" section, built now because it is also the only
-  place to add the two training features the project wanted but lacked: **cosine LR** and
-  **simple resume** (DEVLOG "Training / ops" Keep list).
+  the batch sampler, `evaluate()`, `plot_diagnostic()`) and a thin `main()`. This also adds
+  two shared training features: **cosine LR** and **simple resume**.
 - **`main()` is deliberately NOT centralized.** Keeping each example runnable/readable
   end-to-end is the guardrail (initial design: "no separate generic command-line wrapper").
   `train.py` exposes plain functions — `common_parser()`, `build_model(args, variables,
@@ -923,8 +920,8 @@ example.
 - `diagnostics.py` — reusable grid-query helpers for marginal/AR diagnostics
 - `gaussian_toy.py` — executable Gaussian toy: generator, training, oracle, eval, checkpoint, plot
 - `gp1d.py`        — executable GP-1D example: generator, training, eval, checkpoint, plot
-- `data.py`        — generators + save/load (future sharded saved-pool path)
-- `train.py`       — loop + resume (future sharded saved-pool path)
+- `data.py`        — offline sharded data pools (`write_pool` + `PoolReader`)
+- `train.py`       — shared training loop, checkpointing, config, and resume
 - Dependencies: **torch only** in the core; plotting imports are isolated to `gaussian_toy.py`.
   Match the pinned workstation-tested stack unless there is a specific reason to change it:
   `torch==2.11.0+cu128` via `https://download.pytorch.org/whl/cu128` on the RTX 4060

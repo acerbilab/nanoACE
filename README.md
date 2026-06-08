@@ -1,13 +1,13 @@
 # nanoACE
 
-nanoACE is a small, readable implementation of the core ideas behind the
-Amortized Conditioning Engine (ACE): treat data, interpretable latents, and
-runtime prior information as tokens; condition on one token set; predict
-distributions over another token set.
+nanoACE is a small, readable, and fully operational implementation of the
+[Amortized Conditioning Engine (ACE)](https://acerbilab.github.io/amortized-conditioning-engine/):
+treat data, interpretable latents, and runtime prior information as tokens;
+condition on one token set; predict distributions over another token set.
 
-The goal is legible source that a human or coding agent can read end to end and
-extend. It is not a packaged ACE runtime, not a benchmark suite, and not a clone
-of the original research code.
+The goal is reasonably self-contained source that a human or coding agent can
+read end to end and extend. The original research code is stored in
+[this other repo](https://github.com/acerbilab/amortized-conditioning-engine/).
 
 ## Reference
 
@@ -22,9 +22,7 @@ This project is based on:
 }
 ```
 
-Local paper markdown is in [paper/](paper/). The upstream paper page links to
-the paper, markdown, and original ACE code:
-[chang2025amortized_overview.md](paper/chang2025amortized_overview.md).
+Local paper markdown is in [paper/](paper/).
 
 ## Current Status
 
@@ -84,11 +82,10 @@ Implemented modules:
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Current playground weights are hosted outside this repo in
-`lacerbi/nanoACE-playground-weights`. They are exported from retained runs under
-the shared multi-latent reveal DGP: Gaussian 80k steps, GP-1D 200k, SIR 100k, and
-BO-1D 200k. Local `artifacts/` and `playground/public/models/` remain gitignored
-in nanoACE.
+Current playground weights are hosted [outside this repo](https://github.com/lacerbi/nanoACE-playground-weights).
+They are exported from retained runs under the shared multi-latent reveal DGP:
+Gaussian 80k steps, GP-1D 200k, SIR 100k, and BO-1D 200k.
+Local `artifacts/` and `playground/public/models/` remain gitignored in nanoACE.
 
 Next work: inspect the deployed Pages build against the public weights, add
 manifest-level training provenance on the next export, and consider whether the
@@ -130,7 +127,7 @@ All four examples share the training flags defined in [train.py](train.py):
   (precedence: example defaults < `--config` < CLI). YAML keys are the argument names
   with underscores; unknown keys are rejected and values are coerced/validated like CLI
   args. (One asymmetry: `store_true` flags such as `no_plot`/`eval_only` can be turned
-  *on* from YAML but not back *off* from the CLI.) Example:
+  _on_ from YAML but not back _off_ from the CLI.) Example:
 
   ```yaml
   # run.yaml
@@ -328,7 +325,7 @@ The BO example is the Bayesian-optimization task: recover the location `x_opt`
 and value `y_opt` of the global minimum of a black-box 1D function from a few
 samples, and optionally inject a runtime Beta prior over the optimum location
 (the paper's prior-injection BO). Unlike the GP example, whose latents describe
-the function *class*, here the latents are properties of the *specific* sampled
+the function _class_, here the latents are properties of the _specific_ sampled
 function -- exactly the quantities BO normally needs bespoke acquisition machinery
 to reason about. Functions are generated online by a planting data-generating
 process: sample GP hyperparameters (nuisance, not predicted), draw `x_opt`/`y_opt`
@@ -339,7 +336,7 @@ the other three examples already carry grid oracles); the fixed diagnostic inste
 plots the true function and true optimum as the reference.
 
 The headline is **robust prior injection**. The effective prior is
-`(1 - eps) * Beta + eps * Uniform`, so a confidently *wrong* user prior cannot
+`(1 - eps) * Beta + eps * Uniform`, so a confidently _wrong_ user prior cannot
 starve the true optimum of probability mass. The fixed diagnostic shows the same
 observation under three runtime priors side by side: uniform, a correct
 informative prior (which tightens the `x_opt` posterior toward truth), and a wrong
