@@ -14,6 +14,16 @@ selectable — superseding Design 9's "mixed allowed but flagged" (the novel-com
 OOD flag and `goalIsNovelCombo` were removed with it; trained latent subsets,
 including pairs and all-three, remain combinable).
 
+Amended 2026-06-12 (later same day): the mini-panel row became three panels —
+per-targeted-latent log q(θ_true) lines in the metric panel (infer.ts returns
+per-latent log-q; all three recorded every step so goal switches re-render without
+gaps), both continuous-latent posteriors on one shared panel (goal bold, others
+dimmed), and kernel bars on their own. Follow policy paced at 500 ms/step
+(`ALINE.FOLLOW_STEP_MS`). Explainer reframed to lead with the general acquisition
+problem (function learning as the presented instance) and tightened; citations
+point to the ALINE project page. Paper markdown vendored into
+`extensions/{aline,arbuffer}/paper/` (references updated repo-wide).
+
 Reference: Huang, Wen, Bharti, Kaski & Acerbi (2025), *ALINE: Joint Amortization for
 Bayesian Inference and Active Data Acquisition* (NeurIPS 2025). Extension under
 `extensions/aline/` (see `extensions/aline/DEVLOG.md` and `docs/plans/PLAN-aline.md`);
