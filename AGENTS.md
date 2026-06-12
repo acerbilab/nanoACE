@@ -11,6 +11,11 @@ implementation plans live in [docs/plans/](docs/plans/); use them for rationale 
 checklists, but if a plan conflicts with the code or DEVLOG, the code and DEVLOG win.
 The paper this is based on is in [paper/](paper/) as markdown.
 
+**Do not use assistant/session memory systems for this project.** Anything durable
+belongs in the repository docs, as appropriate: design decisions and open items in
+`DEVLOG.md` (or an extension's local DEVLOG), public-facing summaries in the READMEs,
+implementation plans in `docs/plans/`.
+
 ## Commands
 
 Windows / PowerShell, using the project virtualenv explicitly:
@@ -180,8 +185,10 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   sampler; weights exported locally, not deployed — its tests self-skip when the blob
   is absent). The core stays torch-only and legible; do not let the JS toolchain or
   web concerns bleed into `ace.py` or the examples.
-  Treat it like `temp/` in spirit (separate, optional), but unlike `temp/` it *is* checked
-  in and maintained. See `playground/README.md` and the DEVLOG "Web playground" entry.
+  User-facing playground text (hints, explainer modals, README) is didactic and
+  matter-of-fact: state the task, what ACE does, and the honest trade-offs — no
+  hyperbole, and no dismissiveness toward classical methods.
+  See `playground/README.md` and the DEVLOG "Web playground" entry.
 - **`extensions/` holds non-core model extensions.** Each child is self-contained
   (own `README.md` + `DEVLOG.md`; root docs carry only pointers), torch-only, and changes
   **no core file** — it imports the core (and may subclass its internals) from the repo
