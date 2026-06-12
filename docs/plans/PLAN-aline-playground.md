@@ -79,20 +79,21 @@ byte-size check exact; pre-existing tracked fixtures byte-identical after the re
       sanity: manifest lists `policy_blocks.*`/`policy_norm.*`/`policy_head.*` tensors,
       `total_floats` × 2 == weights.bin bytes
 
-Phase 3 — TS model port (`src/ace/aline.ts`):
-- [ ] `class ALINEModel extends ACEModel`: constructor probes the sentinel tensor
+Phase 3 — TS model port (`src/ace/aline.ts`):  [DONE 2026-06-12; all 4 suite tests
+pass at the arbuffer tolerances with no tie-flip warnings; tsc --noEmit clean]
+- [x] `class ALINEModel extends ACEModel`: constructor probes the sentinel tensor
       `policy_blocks.0.q_ln1.weight` (clear error otherwise: "not an ALINE export");
       `nPolicyBlocks` inferred from manifest tensor names
-- [ ] `forwardWithStates(context, target)`: calls the **inherited** `forward()`;
+- [x] `forwardWithStates(context, target)`: calls the **inherited** `forward()`;
       `ctxStates = out.ctxLayers[L-1]`; `tgtStates = finalNorm(out.tgtLayers[L-1])`
       (re-applies `final_norm` with the blob's weights — exactly the states Python's
       `forward_with_states` returns; no base-port modification, no block-loop re-run)
-- [ ] `policyLogits(query, ctxStates, tgtStates)`: inherited `embed(query)`; per
+- [x] `policyLogits(query, ctxStates, tgtStates)`: inherited `embed(query)`; per
       `PolicyBlock`: `kv = layerNorm(ctx, ctx_kv_ln)`, `multiHeadAttention(q_ln1(qry),
       kv, kv, …)`, residual; same for the target read via `tgt_kv_ln`/`q_ln2`; MLP via
       `q_ln3`; finally `linear(layerNorm(qry_i, policy_norm), policy_head)` per
       candidate. No masks anywhere (omission semantics, Design 4)
-- [ ] `src/aline/parity.test.ts`: `describe.skipIf(!HAVE)` (manifest + weights.bin +
+- [x] `src/aline/parity.test.ts`: `describe.skipIf(!HAVE)` (manifest + weights.bin +
       fixture, arbuffer pattern); asserts plain / policy (per-block) / chain sections;
       tolerances RAW `{atol: 3e-4, rtol: 1e-3}`, DERIVED `{atol: 1e-3, rtol: 1e-3}`
       (joint fine-tune ⇒ arbuffer's loosened-RAW precedent)
