@@ -84,6 +84,7 @@ async function mount(): Promise<void> {
   const sirEl = document.getElementById("sir");
   const boEl = document.getElementById("bo");
   const arbufEl = document.getElementById("arbuf");
+  const alineEl = document.getElementById("aline");
   if (gpEl) {
     try {
       const { mountGP } = await import("./gp/demo");
@@ -122,6 +123,14 @@ async function mount(): Promise<void> {
       await mountArbuf(arbufEl);
     } catch (err) {
       arbufEl.innerHTML = `<p class="loading">Failed to load AR-buffer demo: ${String(err)}</p>`;
+    }
+  }
+  if (alineEl) {
+    try {
+      const { mountAline } = await import("./aline/demo");
+      await mountAline(alineEl);
+    } catch (err) {
+      alineEl.innerHTML = `<p class="loading">Failed to load ALINE demo: ${String(err)}</p>`;
     }
   }
 }

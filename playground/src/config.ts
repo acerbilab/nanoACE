@@ -71,5 +71,24 @@ export const ARBUF = {
   HIT_RADIUS_PX: 12,
 };
 
+export const ALINE = {
+  X_DOMAIN: [-1, 1] as [number, number],
+  Y_VIEW: [-2.6, 2.6] as [number, number],
+  Y_NORMAL: [-1, 1] as [number, number],
+  Y_OOD: 2.0,
+  POOL: 128, // candidate pool per episode (the training value)
+  T: 16, // acquisition budget = the training episode length (counts ALL observations after the seed)
+  GRID: 64, // band + RMSE-metric grid resolution
+  M_PRED: 32, // predictive-target x* per episode (the training value)
+  LATENT_GRID: 64, // latent marginal density resolution
+  // Episode contexts trained at 1 seed + T=16 ≤ 17 points; the gp1d warm start's
+  // own ceiling is n_context ≤ 20 — soft and hard OOD hints respectively.
+  CONTEXT_SOFT: 17,
+  CONTEXT_HARD: 20,
+  POLICY_AMP: 0.2, // bottom policy-pmf overlay amplitude (fraction of the y view)
+  SNAP_EPS: 0.02, // your-own-data mode: candidates this close to an observation are unavailable
+  HIT_RADIUS_PX: 12,
+};
+
 // Display labels for the discrete kernel latent (order matches gp1d.KERNELS).
 export const KERNEL_LABELS = ["RBF", "Matérn-½", "Matérn-3/2", "Periodic"];

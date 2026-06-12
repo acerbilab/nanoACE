@@ -112,8 +112,13 @@ seed-deterministic]
       relative (float64 both sides); **not** gated on the weights blob (fixture is
       tracked and checkpoint-independent)
 
-Phase 5 — tab (`src/aline/infer.ts` + `demo.ts` + registration):
-- [ ] `infer.ts` (DOM-free): episode state (pool x/y, observed set, goal ξ, t, T,
+Phase 5 — tab (`src/aline/infer.ts` + `demo.ts` + registration):  [DONE 2026-06-12;
+full npm test 14 files / 37 tests green; ~170 ms per interaction step in the node
+smoke run. One refinement over the plan: infer.ts always appends all three latent
+rows (extra non-ξ rows are free by row independence), so latent marginals and a
+ξ-independent log q(θ_true) metric stay available across goal switches — the policy
+still reads only the ξ rows]
+- [x] `infer.ts` (DOM-free): episode state (pool x/y, observed set, goal ξ, t, T,
       hidden truths); token builders (context VALUE tokens = observed points only;
       target = active goal tokens [selected latent QUERYs and/or 32 x\* QUERYs] +
       appended plot-grid band QUERYs + the available candidates appended again as
@@ -123,7 +128,7 @@ Phase 5 — tab (`src/aline/infer.ts` + `demo.ts` + registration):
       `alineStep(model, state)` → one `forwardWithStates` + `policyLogits`
       over goal-row slices → band, marginals, policy pmf + argmax, US pick (Design 7),
       metrics (Design 8); `applyObservation(state, idx)`; seeded episode determinism
-- [ ] `demo.ts`: plot via `plot.ts`; policy pmf along the bottom axis at candidate
+- [x] `demo.ts`: plot via `plot.ts`; policy pmf along the bottom axis at candidate
       locations (BO `drawBottomDensity` precedent, peak-normalized) + argmax marker +
       US marker; goal chips (predictive ⊻ latent subset; mixed selection allowed,
       flagged "novel combination (untrained)"); controls: New function / Step /
@@ -132,15 +137,16 @@ Phase 5 — tab (`src/aline/infer.ts` + `demo.ts` + registration):
       t/T; OOD warnings (Design 9); metric readout + mini-curve; "?" explainer modal
       (task / what ALINE does / vs classical active learning; Huang et al. 2025 +
       `aceFooter`); graceful missing-blob notice (arbuffer `mountArbuf` pattern)
-- [ ] registration: `index.html` sixth tab button + panel with DOM id `aline`
+- [x] registration: `index.html` sixth tab button + panel with DOM id `aline`
       (`data-tab="aline"`, `<section id="aline">` — short id like `arbuf`, while
       task/blob/fixture names stay `gp1d_aline`, mirroring the arbuf/`gp1d_arbuffer`
       split); `main.ts` mount block (`getElementById("aline")` → `mountAline`);
       `config.ts` `ALINE` block (pool 128, T 16, grid 64, M_pred 32, context hints
       17/20, Y_OOD, overlay amplitude)
-- [ ] tests: `demo.smoke.test.ts` (jsdom, fs-backed fetch stub, sync rAF so Follow
-      policy drains; skip-guarded) + the missing-model notice test (NOT skip-guarded,
-      arbuffer precedent)
+- [x] tests: `demo.smoke.test.ts` (jsdom, fs-backed fetch stub, sync rAF; the smoke
+      clicks Step rather than Follow policy — a synchronous 16-forward drain is too
+      slow for a smoke test, and Step covers the same applyAction path; skip-guarded)
+      + the missing-model notice test (NOT skip-guarded, arbuffer precedent)
 
 Phase 6 — verification + docs wrap:
 - [ ] full `npm test` green twice: with the local blob (all aline suites run) and
