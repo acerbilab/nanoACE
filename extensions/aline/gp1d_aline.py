@@ -576,6 +576,8 @@ def _xi_fill(b: int, m: int, fill: str, device: torch.device | str) -> torch.Ten
         xi[:, :N_LATENTS] = True
     elif fill == "ell":
         xi[:, 0] = True
+    elif fill == "kernel":
+        xi[:, 2] = True
     else:
         raise ValueError(f"unknown xi fill {fill!r}")
     return xi
@@ -753,17 +755,31 @@ def evaluate(model: ALINE, args: argparse.Namespace) -> ALDiagnostic:
         stats = rollout(model, ep, driver=driver, sigma_obs=args.sigma_obs)
         logq_curves[name] = stats["log_q"].mean(dim=0).cpu()
 
-    # Targeting contrast: acquire under matched (xi = lengthscale) vs mismatched
-    # (xi = predictive) goals on identical episodes; score log q(ell_true | D_T).
-    contrast: dict[str, float] = {}
-    for goal in ("ell", "pred"):
+    # Targeting contrast: acquire under a matched single-latent goal vs the
+    # mismatched predictive goal on identical episodes; score log q(theta_S | D_T).
+    # Two instruments: lengthscale (weak for GP-1D — coverage queries pin it
+    # anyway) and kernel (roughness identification wants tight local pairs,
+    # prediction wants coverage — the goals genuinely conflict).
+    acquired: dict[str, Episode] = {}
+    for goal in ("ell", "kernel", "pred"):
         ep = eval_episodes(model, args, goal, 3)
         rollout(model, ep, driver="argmax", sigma_obs=args.sigma_obs)
+        acquired[goal] = ep
+
+    def score_goal(ep: Episode, col: int) -> float:
         ep.target.mask[:] = False
-        ep.target.mask[:, 0] = True
+        ep.target.mask[:, col] = True
         pred = model(Batch(model.variables, ep.context, ep.target))
-        contrast[goal] = float(pred.log_prob(ep.target)[:, 0].mean())
-    contrast["delta"] = contrast["ell"] - contrast["pred"]
+        return float(pred.log_prob(ep.target)[:, col].mean())
+
+    contrast = {
+        "ell_matched": score_goal(acquired["ell"], 0),
+        "ell_mismatched": score_goal(acquired["pred"], 0),
+        "kernel_matched": score_goal(acquired["kernel"], 2),
+        "kernel_mismatched": score_goal(acquired["pred"], 2),
+    }
+    contrast["ell_delta"] = contrast["ell_matched"] - contrast["ell_mismatched"]
+    contrast["kernel_delta"] = contrast["kernel_matched"] - contrast["kernel_mismatched"]
 
     ep = eval_episodes(model, args, "theta", 4)
     rollout(model, ep, driver="argmax", sigma_obs=args.sigma_obs)
@@ -789,9 +805,12 @@ def evaluate(model: ALINE, args: argparse.Namespace) -> ALDiagnostic:
         "rmse_final_us": float(rmse_curves["us"][-1]),
         "logq_theta_final_aline": float(logq_curves["aline"][-1]),
         "logq_theta_final_random": float(logq_curves["random"][-1]),
-        "contrast_logq_ell_matched": contrast["ell"],
-        "contrast_logq_ell_mismatched": contrast["pred"],
-        "contrast_delta": contrast["delta"],
+        "contrast_ell_matched": contrast["ell_matched"],
+        "contrast_ell_mismatched": contrast["ell_mismatched"],
+        "contrast_ell_delta": contrast["ell_delta"],
+        "contrast_kernel_matched": contrast["kernel_matched"],
+        "contrast_kernel_mismatched": contrast["kernel_mismatched"],
+        "contrast_kernel_delta": contrast["kernel_delta"],
         "oracle_kernel_kl_mean": sum(r["kernel_kl"] for r in oracle_rows) / max(1, len(oracle_rows)),
     }
 
@@ -800,8 +819,10 @@ def evaluate(model: ALINE, args: argparse.Namespace) -> ALDiagnostic:
           f"random {metrics['rmse_final_random']:.4f}  us {metrics['rmse_final_us']:.4f}")
     print(f"theta log q @T      aline {metrics['logq_theta_final_aline']:+.4f}  "
           f"random {metrics['logq_theta_final_random']:+.4f}")
-    print(f"targeting contrast  log q(ell|D_T): matched {contrast['ell']:+.4f}  "
-          f"mismatched {contrast['pred']:+.4f}  delta {contrast['delta']:+.4f}")
+    print(f"targeting contrast  log q(ell|D_T):    matched {contrast['ell_matched']:+.4f}  "
+          f"mismatched {contrast['ell_mismatched']:+.4f}  delta {contrast['ell_delta']:+.4f}")
+    print(f"targeting contrast  log q(kernel|D_T): matched {contrast['kernel_matched']:+.4f}  "
+          f"mismatched {contrast['kernel_mismatched']:+.4f}  delta {contrast['kernel_delta']:+.4f}")
     for i, row in enumerate(oracle_rows):
         print(
             f"oracle calib ep{i}    ell mean {row['ell_mean']:+.3f}/{row['oracle_ell_mean']:+.3f} "
@@ -900,15 +921,24 @@ def plot_diagnostic(diag: ALDiagnostic, path: str | Path) -> None:
     ax.legend(loc="best", fontsize=8)
 
     ax = fig.add_subplot(gs[1, 2])
-    bars = [diag.contrast["ell"], diag.contrast["pred"]]
-    ax.bar([0, 1], bars, color=["tab:orange", "0.6"], width=0.55)
-    ax.set_xticks([0, 1], ["matched\n(xi=ell)", "mismatched\n(xi=pred)"])
-    ax.set_title(f"log q(ell_true | D_T)  (delta {diag.contrast['delta']:+.3f})")
+    pos = [0.0, 1.0, 2.6, 3.6]
+    values = [
+        diag.contrast["ell_matched"],
+        diag.contrast["ell_mismatched"],
+        diag.contrast["kernel_matched"],
+        diag.contrast["kernel_mismatched"],
+    ]
+    ax.bar(pos, values, color=["tab:orange", "0.6", "tab:orange", "0.6"], width=0.8)
+    ax.set_xticks(pos, ["ell\nmatched", "ell\nxi=pred", "kernel\nmatched", "kernel\nxi=pred"])
+    ax.set_title(
+        "targeting contrast: log q(theta_S | D_T)\n"
+        f"delta ell {diag.contrast['ell_delta']:+.3f}, kernel {diag.contrast['kernel_delta']:+.3f}"
+    )
 
     fig.suptitle(
         f"ALINE GP-1D AL: RMSE@T aline {diag.metrics['rmse_final_aline']:.3f} "
         f"vs random {diag.metrics['rmse_final_random']:.3f} vs US {diag.metrics['rmse_final_us']:.3f}; "
-        f"targeting delta {diag.contrast['delta']:+.3f}"
+        f"targeting deltas ell {diag.contrast['ell_delta']:+.3f} / kernel {diag.contrast['kernel_delta']:+.3f}"
     )
     fig.savefig(path, dpi=160)
     plt.close(fig)

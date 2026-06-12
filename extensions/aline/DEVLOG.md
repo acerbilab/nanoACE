@@ -45,7 +45,14 @@ immediate rewards), avg 1.02 s/step on the RTX 4060. Full log:
   by goal in the demo panel; it just doesn't yet buy measurable log q. A
   **kernel-goal contrast** would be a fairer instrument (kernel identification
   wants tight local pairs to read roughness; prediction wants coverage) — an
-  eval-only change, queued as fallback #4.
+  eval-only change, queued as fallback #4. *Implemented same day*: `evaluate`
+  now reports both instruments (acquire under ξ={kernel} vs ξ=pred on identical
+  episodes, score `log q(kernel_true | D_T)` through the categorical head). On
+  the 5k model the kernel contrast is **also null** (matched −0.272 vs
+  mismatched −0.266, δ = −0.006; all other metrics reproduce digit-for-digit),
+  so at this budget the missing contrast is not instrument-specific —
+  consistent with undertraining being the dominant factor, with the
+  task-structure hypothesis still open for ℓ specifically.
 - Reward tails bounded as predicted under the noiseless DGP (pred: −0.9 to
   +1.8, mean +0.14); `--sigma-obs` stays at 0.
 
@@ -156,6 +163,5 @@ RL loop, and diagnostics live in `gp1d_aline.py`.
 - ALINE + ACEP runtime Beta priors (the paper's own stated future work; the
   co-location makes `ace_prior_beta.py` available nearly for free).
 - Per-layer cache reads for the policy (the reference's read pattern).
-- Kernel-goal targeting contrast in `evaluate` (fairer instrument for GP-1D).
 - Second experiment family (psychometric / BED) = the pre-agreed graduation
   trigger to a separate nanoALINE repo, not this extension.
