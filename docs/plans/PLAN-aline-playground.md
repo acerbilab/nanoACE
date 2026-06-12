@@ -98,15 +98,17 @@ pass at the arbuffer tolerances with no tie-flip warnings; tsc --noEmit clean]
       tolerances RAW `{atol: 3e-4, rtol: 1e-3}`, DERIVED `{atol: 1e-3, rtol: 1e-3}`
       (joint fine-tune ⇒ arbuffer's loosened-RAW precedent)
 
-Phase 4 — TS environment (`src/aline/env.ts`):
-- [ ] kernel functions (RBF, Matern-1/2, Matern-3/2, Periodic with period = 1.0;
+Phase 4 — TS environment (`src/aline/env.ts`):  [DONE 2026-06-12; K/L match torch
+float64 at atol 1e-10 / rtol 1e-8 incl. the clustered cases; episode sampler
+seed-deterministic]
+- [x] kernel functions (RBF, Matern-1/2, Matern-3/2, Periodic with period = 1.0;
       replicate `_kernel_covariance`'s `ell.clamp_min(1e-6)` guard), covariance
       build + `1e-5` diagonal jitter, float64 Cholesky (net-new, ~20 lines),
       hyperprior sampling (`log_ell ~ U(ln 0.12, ln 0.80)`,
       `log_scale ~ U(ln 0.25, ln 1.00)`, kernel uniform in {0..3}), joint zero-mean
       draw `L @ z` at pool + grid locations via `rng.ts` (`mulberry32` + `randn`);
       noiseless (matches training)
-- [ ] `src/aline/env.test.ts` vs `gp1d_aline.env.json`: K and L match to ~1e-9
+- [x] `src/aline/env.test.ts` vs `gp1d_aline.env.json`: K and L match to ~1e-9
       relative (float64 both sides); **not** gated on the weights blob (fixture is
       tracked and checkpoint-independent)
 
