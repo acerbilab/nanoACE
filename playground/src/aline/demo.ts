@@ -50,25 +50,35 @@ const EXPLAINER = {
   title: "About: active learning with ALINE",
   html: `
     <h3>The task</h3>
-    <p>Active learning: measurements are expensive, so choose <em>where</em> to measure
-    next so that you learn the most — for whatever you are trying to learn. Predicting
-    the function everywhere wants space-filling queries; identifying the kernel or the
-    lengthscale can want quite different ones. Classically this needs a fitted surrogate
-    (e.g. a GP) plus a hand-chosen acquisition rule per goal, re-optimized at every step.</p>
+    <p>Active data acquisition: when each measurement is expensive, it should be chosen
+    to teach you the most — <em>about whatever you actually care about</em>. The target
+    is rarely "everything": often it is a few parameters of a model (the rest being
+    nuisance), or predictions over a region of interest. The same problem appears
+    across fields — choosing the stimuli in a behavioral experiment, the next sensor
+    placement, the next simulation to run.</p>
+    <p>This tab presents the function-learning instance of that general problem: an
+    unknown 1D function can be measured at a limited number of locations, and the goal
+    may be the <em>whole function</em> (predict it everywhere) or specific
+    <em>properties</em> of it — its lengthscale (how fast it varies), its outputscale
+    (how large its swings are), or its kernel (which family its variation belongs to).
+    Different goals reward different measurements: prediction wants coverage, while
+    pinning down the lengthscale favors closely spaced probes, for instance.</p>
     <h3>What this tab is doing</h3>
-    <p>The demo draws a random GP function and hides it; every query — your click, or
+    <p>The demo draws a random function and hides it; every query — your click, or
     the policy's pick — measures its true value at one location, with a budget of 16
-    measurements per episode. ALINE is one network that both <em>infers</em> and
-    <em>acts</em>. The inference side is exactly the GP-1D ACE model: posteriors over
-    the latents and a predictive band over the function. The new part is a small
-    policy head that scores every candidate location by how informative measuring
-    there should be <em>for the currently selected goal</em> — the orange distribution
-    along the bottom axis, recomputed in one forward pass after every measurement. It
-    was trained with reinforcement learning, the reward being the model's own
-    step-to-step improvement in the log-probability of the goal (self-estimated
-    information gain; Huang et al., 2025). Inside the model a goal is just a choice of
-    target tokens, so switching goals — even halfway through an episode — is
-    instant.</p>
+    measurements per episode. ALINE (Huang et al., 2025) is one network that both
+    <em>infers</em> and <em>acts</em>. The inference side is exactly the GP-1D ACE
+    model: posteriors over the latent properties and a predictive band over the
+    function. The new part is a small policy head that scores every candidate
+    location by how informative measuring there should be <em>for the currently
+    selected goal</em> — the orange distribution along the bottom axis, recomputed in
+    one forward pass after every measurement. It was trained with reinforcement
+    learning, the reward being the model's own step-to-step improvement in the
+    log-probability of the goal (self-estimated information gain). Inside the model a
+    goal is just a choice of target tokens, so nothing here is specific to these four
+    goals: any subset of the latents or predictions the model knows about could be
+    targeted the same way, and switching goals — even halfway through an episode —
+    is instant.</p>
     <h3>Compared with the classical approach</h3>
     <p>The green marker shows what uncertainty sampling (query where the predictive
     variance is largest — a strong classical baseline) would pick from the same model.
