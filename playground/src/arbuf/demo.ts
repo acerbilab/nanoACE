@@ -46,29 +46,32 @@ const EXPLAINER = {
   title: "About: joint draws with an AR buffer",
   html: `
     <h3>The task</h3>
-    <p>ACE is a diagonal prediction map: it returns independent per-point marginals. Those
-    answer "what is f(x) at this location?", but sampling each grid point independently
-    produces the gray jagged lines — they ignore correlations between locations and do not
-    look like functions. Coherent whole-function samples require the joint distribution over
-    all grid points.</p>
+    <p>ACE returns an independent marginal distribution for each queried target — good
+    one-value answers, but silent on how the values co-vary. Any question about several
+    targets at once (a whole curve, a coherent scenario) needs samples from the joint
+    distribution, where correlated values move together. In this tab the targets are the
+    values of an unknown function on a dense grid: a joint draw is a plausible whole
+    function, while the gray lines — each grid point sampled from its own marginal — are
+    right pointwise but jump independently from point to point, because nothing ties
+    neighboring values together.</p>
     <h3>What this tab is doing</h3>
-    <p>Joint samples come from the autoregressive (AR) factorization
-    p(y<sub>1</sub>, …, y<sub>K</sub> | context) = Π<sub>k</sub> p(y<sub>k</sub> |
-    y<sub>&lt;k</sub>, context): predict one location, sample it, condition on the sample,
-    repeat. The standard implementation re-encodes the entire context plus all realized points
-    at every step. Our causal AR buffer instead encodes the context once, caches it, and routes
-    each realized sample through a separate causal stream that later steps attend to. Each
-    colored curve is one draw decoded against the same cached encoding; Resample reuses the
-    cache, and the timing line below the plot shows the split.</p>
+    <p>Joint samples come from the chain rule: predict one point, sample it, condition on
+    the realized value, move to the next — later points see the earlier draws, which is
+    what creates the correlation. The standard implementation re-encodes the entire context
+    plus all realized points at every step. Our causal AR buffer instead encodes the
+    context once, caches it, and routes each realized sample through a separate causal
+    stream that later steps attend to. Each colored curve is one draw decoded against the
+    same cached encoding; Resample reuses the cache.</p>
     <h3>Compared with the standard approach</h3>
-    <p>The factorization is identical; the cost is not. Re-encoding costs O(K·(N+K)²) attention
-    work over a K-step chain; the buffer costs O(N² + K·(N+K)). In this page's implementation
-    that is the difference between several seconds and a fraction of a second per resample —
-    it is what makes the tab interactive. You can feel it yourself: the sampler toggle under
-    <em>sampling</em> runs the re-encoding variant live (a single draw; the line below the
-    plot reports cost per draw, so the two modes compare directly). The model is a
-    fine-tuned extension of the GP-1D model (the buffer stream is the new part; the blue
-    band is its ordinary marginal prediction), so pinned latents condition the draws too.</p>
+    <p>Same factorization, different cost: re-encoding does O(K·(N+K)²) attention work over
+    a K-point chain on N context tokens, the buffer O(N² + K·(N+K)) — in this page's
+    implementation, several seconds versus a fraction of a second per resample. The sampler
+    toggle under <em>sampling</em> runs the re-encoding variant live, and the line below
+    the plot reports cost per draw, so the two compare directly. The buffer's read of
+    realized points is learned by fine-tuning the GP-1D model (here it nearly matches the
+    re-encoding chain's joint quality), and the rest of that model carries over: the blue
+    band is its ordinary marginal prediction, and pinned latents condition the joint draws
+    too.</p>
     ${aceFooter(
       // OpenReview link is deliberate for now; switch to the paper's project page later.
       'The buffer mechanism follows Hassan et al. (2026), <em>Efficient Autoregressive Inference for Transformer Probabilistic Models</em> (ICLR 2026) — <a href="https://openreview.net/forum?id=5bfUqlOhAH">OpenReview</a>.',
