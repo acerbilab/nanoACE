@@ -162,8 +162,8 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
   root.innerHTML = `
     <p class="ab-hint">Coherent joint draws from a causal AR buffer
       (<a href="https://github.com/acerbilab/nanoACE/tree/main/extensions/arbuffer">extensions/arbuffer</a>):
-      each colored curve is one whole-function sample decoded from a single cached
-      context encoding — gray curves are independent per-point samples, for contrast.</p>
+      each colored curve is one whole-function sample — gray curves are independent
+      per-point samples, for contrast.</p>
     <div class="ab-top">
       <div class="ab-plot-col">
         <canvas class="ab-main" width="660" height="380" style="width:660px;height:380px;"></canvas>
