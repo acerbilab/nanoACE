@@ -361,8 +361,15 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     const myEpoch = epoch;
     const tick = () => {
       if (myEpoch !== epoch || !budgetLeft() || !lastStep) return;
+      const t0 = performance.now();
       applyAction(candIdx[lastStep.argmaxIdx]);
-      if (budgetLeft()) raf(tick);
+      if (budgetLeft()) {
+        // Pace at FOLLOW_STEP_MS between step starts (compute time included).
+        const remaining = Math.max(0, ALINE.FOLLOW_STEP_MS - (performance.now() - t0));
+        setTimeout(() => {
+          if (myEpoch === epoch) raf(tick);
+        }, remaining);
+      }
     };
     raf(tick);
   }

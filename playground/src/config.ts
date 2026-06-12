@@ -86,6 +86,7 @@ export const ALINE = {
   CONTEXT_SOFT: 17,
   CONTEXT_HARD: 20,
   POLICY_AMP: 0.2, // bottom policy-pmf overlay amplitude (fraction of the y view)
+  FOLLOW_STEP_MS: 500, // Follow-policy pacing: time between step starts (compute included)
   SNAP_EPS: 0.02, // your-own-data mode: candidates this close to an observation are unavailable
   HIT_RADIUS_PX: 12,
 };
