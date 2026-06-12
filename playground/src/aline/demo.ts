@@ -96,6 +96,7 @@ const CSS = `
 .al-goal-btns button { font: inherit; padding: 4px 8px; border: 1px solid var(--line);
   background: #fff; border-radius: 6px; cursor: pointer; }
 .al-goal-btns button.sel { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.al-goal-sep { width: 1px; align-self: stretch; background: var(--line); margin: 2px 3px; }
 .al-row { display: flex; align-items: center; gap: 8px; }
 .al-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .al-btn { font: inherit; padding: 6px 10px; border: 1px solid var(--line); background: #fff;
@@ -191,6 +192,7 @@ export async function mountAline(el: HTMLElement): Promise<void> {
           <legend>goal — what should the queries teach the model? (shift-click combines)</legend>
           <div class="al-goal-btns">
             <button class="g-pred" title="Improve the predictive band everywhere">predict f(x)</button>
+            <span class="al-goal-sep"></span>
             <button class="g-ell" title="Pin down the lengthscale">lengthscale ℓ</button>
             <button class="g-scale" title="Pin down the outputscale">outputscale σ</button>
             <button class="g-kernel" title="Identify the kernel">kernel</button>
