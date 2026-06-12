@@ -43,7 +43,10 @@ const ORACLE_SEED = 777;
 
 // One color per latent, shared by the marginal and metric panels.
 const LATENT_COLOR = { ell: "#9333ea", scale: "#0d9488", kernel: "#64748b" };
-const LATENT_DIM = { ell: "rgba(147,51,234,0.35)", scale: "rgba(13,148,136,0.35)" };
+const LATENT_DIM = {
+  ell: "rgba(147,51,234,0.35)",
+  scale: "rgba(13,148,136,0.35)",
+};
 const KERNEL_SHORT = ["RBF", "M½", "M3/2", "Per"];
 
 const EXPLAINER = {
@@ -52,44 +55,39 @@ const EXPLAINER = {
     <h3>The task</h3>
     <p>Active data acquisition: when each measurement is expensive, it should be chosen
     to teach you the most — <em>about whatever you actually care about</em>. The target
-    is rarely "everything": often it is a few parameters of a model (the rest being
-    nuisance), or predictions over a region of interest. The same problem appears
-    across fields — choosing the stimuli in a behavioral experiment, the next sensor
-    placement, the next simulation to run.</p>
-    <p>This tab presents the function-learning instance of that general problem: an
-    unknown 1D function can be measured at a limited number of locations, and the goal
-    may be the <em>whole function</em> (predict it everywhere) or specific
-    <em>properties</em> of it — its lengthscale (how fast it varies), its outputscale
-    (how large its swings are), or its kernel (which family its variation belongs to).
-    Different goals reward different measurements: prediction wants coverage, while
-    pinning down the lengthscale favors closely spaced probes, for instance.</p>
+    is rarely "everything": often it is a few model parameters (the rest being nuisance)
+    or predictions over a region of interest — the same problem appears everywhere, from
+    choosing stimuli in a behavioral experiment to placing sensors.</p>
+    <p>This tab presents the function-learning instance: an unknown 1D function can be
+    measured at a few locations, and the goal may be the <em>whole function</em>
+    (predict it everywhere) or specific <em>properties</em> — its lengthscale (how fast
+    it varies), outputscale (how large its swings are), or kernel (the family its
+    variation belongs to). Different goals reward different measurements: prediction
+    wants coverage; pinning down the lengthscale favors closely spaced probes.</p>
     <h3>What this tab is doing</h3>
     <p>The demo draws a random function and hides it; every query — your click, or
     the policy's pick — measures its true value at one location, with a budget of 16
-    measurements per episode. ALINE (Huang et al., 2025) is one network that both
-    <em>infers</em> and <em>acts</em>. The inference side is exactly the GP-1D ACE
-    model: posteriors over the latent properties and a predictive band over the
-    function. The new part is a small policy head that scores every candidate
-    location by how informative measuring there should be <em>for the currently
-    selected goal</em> — the orange distribution along the bottom axis, recomputed in
-    one forward pass after every measurement. It was trained with reinforcement
-    learning, the reward being the model's own step-to-step improvement in the
-    log-probability of the goal (self-estimated information gain). Inside the model a
-    goal is just a choice of target tokens, so nothing here is specific to these four
-    goals: any subset of the latents or predictions the model knows about could be
-    targeted the same way, and switching goals — even halfway through an episode —
-    is instant.</p>
+    per episode. ALINE (Huang et al., 2025) is one network that both <em>infers</em>
+    and <em>acts</em>: the inference side is exactly the GP-1D ACE model (the
+    predictive band and the latent posteriors); the new part is a small policy head
+    that scores every candidate location by how informative measuring there should be
+    <em>for the currently selected goal</em> — the orange distribution along the
+    bottom axis, recomputed in one forward pass after every measurement. The policy
+    was trained with reinforcement learning, rewarded by the model's own step-to-step
+    improvement in the log-probability of the goal (self-estimated information gain).
+    Inside the model a goal is just a choice of target tokens, so nothing is specific
+    to these four: any subset of latents or predictions could be targeted, and
+    switching goals mid-episode is instant.</p>
     <h3>Compared with the classical approach</h3>
-    <p>The green marker shows what uncertainty sampling (query where the predictive
-    variance is largest — a strong classical baseline) would pick from the same model.
-    Where the orange and green markers separate, the learned policy is deviating from
-    the heuristic. Classical pipelines refit a surrogate and re-optimize an acquisition
-    rule at every step, and need a different rule for each goal; here one forward pass
-    answers "where should I measure next, for this goal?" directly. The honest
-    trade-off: the policy is only as good as its training — this demo's policy
-    reliably beats random querying, but a well-tuned uncertainty-sampling baseline is
-    still competitive on pure prediction, and the goal-targeting differences can be
-    subtle.</p>
+    <p>The green marker shows what <em>uncertainty sampling</em> (US; query where the
+    predictive variance is largest — a strong classical baseline) would pick from the
+    same model; where the markers separate, the learned policy is deviating from the
+    heuristic. Classical pipelines refit a surrogate and re-optimize a per-goal
+    acquisition rule at every step; here one forward pass answers "where should I
+    measure next, for this goal?" directly. The honest trade-off: the policy is only
+    as good as its training — this demo's beats random querying, but a well-tuned US
+    baseline is still competitive on pure prediction, and the goal-targeting
+    differences can be subtle.</p>
     ${aceFooter(
       'The acquisition policy follows Huang, Wen, Bharti, Kaski &amp; Acerbi (2025), <em>ALINE: Joint Amortization for Bayesian Inference and Active Data Acquisition</em> (NeurIPS 2025) — <a href="https://www.huangdaolang.com/aline/">project page</a>.',
     )}`,
@@ -139,7 +137,9 @@ export async function mountAline(el: HTMLElement): Promise<void> {
   injectCss();
   let model: ALINEModel;
   try {
-    const weights = await loadWeights(`${import.meta.env.BASE_URL}models/gp1d_aline`);
+    const weights = await loadWeights(
+      `${import.meta.env.BASE_URL}models/gp1d_aline`,
+    );
     model = new ALINEModel(weights);
   } catch {
     el.innerHTML = `<p class="loading">The ALINE model weights are unavailable here.
@@ -157,7 +157,13 @@ export async function mountAline(el: HTMLElement): Promise<void> {
   let obsIdx: number[] = [];
   let episodeSeed = 0;
   let revealTruth = false;
-  let history: Array<{ t: number; rmse: number; ell: number; scale: number; kernel: number }> = [];
+  let history: Array<{
+    t: number;
+    rmse: number;
+    ell: number;
+    scale: number;
+    kernel: number;
+  }> = [];
 
   const defaultPoints: Point[] = [
     { x: -0.9, y: -0.4 },
@@ -167,8 +173,14 @@ export async function mountAline(el: HTMLElement): Promise<void> {
   ];
   const points: Point[] = defaultPoints.map((p) => ({ ...p }));
   const oracleRng = mulberry32(ORACLE_SEED);
-  const oraclePool = Array.from({ length: ALINE.POOL }, () => 2 * oracleRng() - 1);
-  const oracleXStar = Array.from({ length: ALINE.M_PRED }, () => 2 * oracleRng() - 1);
+  const oraclePool = Array.from(
+    { length: ALINE.POOL },
+    () => 2 * oracleRng() - 1,
+  );
+  const oracleXStar = Array.from(
+    { length: ALINE.M_PRED },
+    () => 2 * oracleRng() - 1,
+  );
   let dragIdx: number | null = null;
 
   let lastStep: AlineStep | null = null;
@@ -241,13 +253,18 @@ export async function mountAline(el: HTMLElement): Promise<void> {
   const mainCanvas = root.querySelector<HTMLCanvasElement>(".al-main")!;
   const metricCanvas = root.querySelector<HTMLCanvasElement>(".al-metric")!;
   const latentsCanvas = root.querySelector<HTMLCanvasElement>(".al-latents")!;
-  const kernelCanvas = root.querySelector<HTMLCanvasElement>(".al-kernelpanel")!;
+  const kernelCanvas =
+    root.querySelector<HTMLCanvasElement>(".al-kernelpanel")!;
   const statusEl = root.querySelector<HTMLParagraphElement>(".al-status")!;
   const counterEl = root.querySelector<HTMLSpanElement>(".al-counter")!;
   const modeEpisode = root.querySelector<HTMLInputElement>(".al-mode-episode")!;
   const modeOracle = root.querySelector<HTMLInputElement>(".al-mode-oracle")!;
-  const episodeFs = root.querySelector<HTMLFieldSetElement>(".al-episode-controls")!;
-  const oracleFs = root.querySelector<HTMLFieldSetElement>(".al-oracle-controls")!;
+  const episodeFs = root.querySelector<HTMLFieldSetElement>(
+    ".al-episode-controls",
+  )!;
+  const oracleFs = root.querySelector<HTMLFieldSetElement>(
+    ".al-oracle-controls",
+  )!;
   const revealBox = root.querySelector<HTMLInputElement>(".al-reveal")!;
   const stepBtn = root.querySelector<HTMLButtonElement>(".al-step")!;
   const followBtn = root.querySelector<HTMLButtonElement>(".al-follow")!;
@@ -284,7 +301,9 @@ export async function mountAline(el: HTMLElement): Promise<void> {
       }
     } else {
       for (let i = 0; i < oraclePool.length; i++) {
-        const near = points.some((p) => Math.abs(p.x - oraclePool[i]) < ALINE.SNAP_EPS);
+        const near = points.some(
+          (p) => Math.abs(p.x - oraclePool[i]) < ALINE.SNAP_EPS,
+        );
         if (!near) {
           candIdx.push(i);
           candX.push(oraclePool[i]);
@@ -304,12 +323,24 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     const xStar = mode === "episode" && draw ? draw.xStar : oracleXStar;
     const truth =
       mode === "episode" && draw
-        ? { gridY: draw.gridY, logEll: draw.logEll, logScale: draw.logScale, kernel: draw.kernel }
+        ? {
+            gridY: draw.gridY,
+            logEll: draw.logEll,
+            logScale: draw.logScale,
+            kernel: draw.kernel,
+          }
         : undefined;
     const t0 = performance.now();
     lastStep = alineStep(
       model,
-      { obs, candX, goal: { ...goal }, xStar, gridX, latentGrid: ALINE.LATENT_GRID },
+      {
+        obs,
+        candX,
+        goal: { ...goal },
+        xStar,
+        gridX,
+        latentGrid: ALINE.LATENT_GRID,
+      },
       truth,
     );
     stepMs = performance.now() - t0;
@@ -319,7 +350,13 @@ export async function mountAline(el: HTMLElement): Promise<void> {
   function pushHistory(): void {
     if (mode !== "episode" || !lastStep?.metrics) return;
     const m = lastStep.metrics;
-    history.push({ t: stepsTaken(), rmse: m.rmse, ell: m.logq.ell, scale: m.logq.scale, kernel: m.logq.kernel });
+    history.push({
+      t: stepsTaken(),
+      rmse: m.rmse,
+      ell: m.logq.ell,
+      scale: m.logq.scale,
+      kernel: m.logq.kernel,
+    });
   }
 
   function newEpisode(): void {
@@ -375,7 +412,10 @@ export async function mountAline(el: HTMLElement): Promise<void> {
       applyAction(candIdx[lastStep.argmaxIdx]);
       if (budgetLeft()) {
         // Pace at FOLLOW_STEP_MS between step starts (compute time included).
-        const remaining = Math.max(0, ALINE.FOLLOW_STEP_MS - (performance.now() - t0));
+        const remaining = Math.max(
+          0,
+          ALINE.FOLLOW_STEP_MS - (performance.now() - t0),
+        );
         setTimeout(() => {
           if (myEpoch === epoch) raf(tick);
         }, remaining);
@@ -424,8 +464,12 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     });
   });
 
-  root.querySelector<HTMLButtonElement>(".al-new")!.addEventListener("click", newEpisode);
-  root.querySelector<HTMLButtonElement>(".al-restart")!.addEventListener("click", restartEpisode);
+  root
+    .querySelector<HTMLButtonElement>(".al-new")!
+    .addEventListener("click", newEpisode);
+  root
+    .querySelector<HTMLButtonElement>(".al-restart")!
+    .addEventListener("click", restartEpisode);
   stepBtn.addEventListener("click", () => {
     epoch += 1;
     stepOnce();
@@ -435,17 +479,21 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     revealTruth = revealBox.checked;
     drawAll();
   });
-  root.querySelector<HTMLButtonElement>(".al-reset")!.addEventListener("click", () => {
-    epoch += 1;
-    points.length = 0;
-    points.push(...defaultPoints.map((p) => ({ ...p })));
-    recompute();
-  });
-  root.querySelector<HTMLButtonElement>(".al-clear")!.addEventListener("click", () => {
-    epoch += 1;
-    points.length = 0;
-    recompute();
-  });
+  root
+    .querySelector<HTMLButtonElement>(".al-reset")!
+    .addEventListener("click", () => {
+      epoch += 1;
+      points.length = 0;
+      points.push(...defaultPoints.map((p) => ({ ...p })));
+      recompute();
+    });
+  root
+    .querySelector<HTMLButtonElement>(".al-clear")!
+    .addEventListener("click", () => {
+      epoch += 1;
+      points.length = 0;
+      recompute();
+    });
 
   // --- pointer interaction ---
   let mainPlot: Plot | null = null;
@@ -463,7 +511,13 @@ export async function mountAline(el: HTMLElement): Promise<void> {
       applyAction(candIdx[nearestCandidate(candX, x)]);
       return;
     }
-    const hit = hitPoint(points, mainPlot, e.offsetX, e.offsetY, ALINE.HIT_RADIUS_PX);
+    const hit = hitPoint(
+      points,
+      mainPlot,
+      e.offsetX,
+      e.offsetY,
+      ALINE.HIT_RADIUS_PX,
+    );
     if (hit !== null && (e.shiftKey || e.button === 2)) {
       points.splice(hit, 1);
       epoch += 1;
@@ -475,13 +529,19 @@ export async function mountAline(el: HTMLElement): Promise<void> {
       mainCanvas.setPointerCapture(e.pointerId);
       return;
     }
-    points.push({ x: clampX(mainPlot.pxToX(e.offsetX)), y: clampY(mainPlot.pxToY(e.offsetY)) });
+    points.push({
+      x: clampX(mainPlot.pxToX(e.offsetX)),
+      y: clampY(mainPlot.pxToY(e.offsetY)),
+    });
     epoch += 1;
     recompute();
   });
   mainCanvas.addEventListener("pointermove", (e) => {
     if (dragIdx === null || !mainPlot || mode !== "oracle") return;
-    points[dragIdx] = { x: clampX(mainPlot.pxToX(e.offsetX)), y: clampY(mainPlot.pxToY(e.offsetY)) };
+    points[dragIdx] = {
+      x: clampX(mainPlot.pxToX(e.offsetX)),
+      y: clampY(mainPlot.pxToY(e.offsetY)),
+    };
     recompute();
   });
   const endDrag = () => {
@@ -497,10 +557,13 @@ export async function mountAline(el: HTMLElement): Promise<void> {
       yIsOod: (y) => Math.abs(y) > ALINE.Y_OOD,
       yReason: `beyond training y-range (|y| > ${ALINE.Y_OOD})`,
       maxPoints: ALINE.CONTEXT_SOFT,
-      maxReason: (n) => `${n} points (episodes trained with ≤ ${ALINE.CONTEXT_SOFT})`,
+      maxReason: (n) =>
+        `${n} points (episodes trained with ≤ ${ALINE.CONTEXT_SOFT})`,
     });
     if (obs.length > ALINE.CONTEXT_HARD) {
-      reasons.push(`${obs.length} points (the base model never saw > ${ALINE.CONTEXT_HARD})`);
+      reasons.push(
+        `${obs.length} points (the base model never saw > ${ALINE.CONTEXT_HARD})`,
+      );
     }
     return reasons;
   }
@@ -514,13 +577,24 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     stepBtn.disabled = !left;
     followBtn.disabled = !left;
     counterEl.textContent =
-      mode === "episode" ? `step ${stepsTaken()}/${ALINE.T}${left ? "" : " — budget spent"}` : "";
+      mode === "episode"
+        ? `step ${stepsTaken()}/${ALINE.T}${left ? "" : " — budget spent"}`
+        : "";
   }
 
   function basePlot(): Plot {
-    const p = makePlot(mainCanvas, { xDomain: ALINE.X_DOMAIN, yDomain: ALINE.Y_VIEW });
+    const p = makePlot(mainCanvas, {
+      xDomain: ALINE.X_DOMAIN,
+      yDomain: ALINE.Y_VIEW,
+    });
     p.clear();
-    p.rectData(ALINE.X_DOMAIN[0], ALINE.X_DOMAIN[1], ALINE.Y_NORMAL[0], ALINE.Y_NORMAL[1], "rgba(37,99,235,0.05)");
+    p.rectData(
+      ALINE.X_DOMAIN[0],
+      ALINE.X_DOMAIN[1],
+      ALINE.Y_NORMAL[0],
+      ALINE.Y_NORMAL[1],
+      "rgba(37,99,235,0.05)",
+    );
     p.hline(0, "#eceef2", 1);
     return p;
   }
@@ -536,7 +610,12 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     const base = ALINE.Y_VIEW[0];
     const amp = ALINE.POLICY_AMP * (ALINE.Y_VIEW[1] - ALINE.Y_VIEW[0]);
     const hi = probs.map((v) => base + (v / peak) * amp);
-    p.band(xs, xs.map(() => base), hi, "rgba(234,88,12,0.14)");
+    p.band(
+      xs,
+      xs.map(() => base),
+      hi,
+      "rgba(234,88,12,0.14)",
+    );
     p.line(xs, hi, "#ea580c", 1.6);
 
     const alineX = candX[lastStep.argmaxIdx];
@@ -558,7 +637,9 @@ export async function mountAline(el: HTMLElement): Promise<void> {
       ctx.font = "14px system-ui";
       ctx.textAlign = "center";
       ctx.fillText(
-        mode === "oracle" ? "Add a point to get policy advice." : "Press New function to start an episode.",
+        mode === "oracle"
+          ? "Add a point to get policy advice."
+          : "Press New function to start an episode.",
         mainPlot.width / 2,
         mainPlot.height / 2,
       );
@@ -584,12 +665,16 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     drawPolicyOverlay(mainPlot);
 
     mainPlot.dots(
-      obs.filter((p) => Math.abs(p.y) <= ALINE.Y_OOD).map((p) => [p.x, p.y] as [number, number]),
+      obs
+        .filter((p) => Math.abs(p.y) <= ALINE.Y_OOD)
+        .map((p) => [p.x, p.y] as [number, number]),
       "#111827",
       4,
     );
     mainPlot.dots(
-      obs.filter((p) => Math.abs(p.y) > ALINE.Y_OOD).map((p) => [p.x, p.y] as [number, number]),
+      obs
+        .filter((p) => Math.abs(p.y) > ALINE.Y_OOD)
+        .map((p) => [p.x, p.y] as [number, number]),
       "#b45309",
       4,
     );
@@ -600,14 +685,20 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     mainPlot.axes();
 
     const reasons = oodReasons();
-    mainPlot.warning(reasons.length ? `Out of training distribution: ${reasons.join(" / ")}` : "");
+    mainPlot.warning(
+      reasons.length
+        ? `Out of training distribution: ${reasons.join(" / ")}`
+        : "",
+    );
 
     if (mode === "episode" && draw) {
       const m = lastStep.metrics;
       const truthTxt = revealTruth
         ? ` · truth: ${KERNEL_LABELS[draw.kernel]}, ℓ=${Math.exp(draw.logEll).toFixed(2)}, σ=${Math.exp(draw.logScale).toFixed(2)}`
         : " · truth hidden";
-      const logqMean = m ? (m.logq.ell + m.logq.scale + m.logq.kernel) / 3 : null;
+      const logqMean = m
+        ? (m.logq.ell + m.logq.scale + m.logq.kernel) / 3
+        : null;
       statusEl.textContent =
         `step ${stepsTaken()}/${ALINE.T} · RMSE ${m ? m.rmse.toFixed(3) : "—"} · ` +
         `log q(θ) ${logqMean !== null ? logqMean.toFixed(2) : "—"}${truthTxt} · ${stepMs.toFixed(0)} ms/step`;
@@ -645,15 +736,37 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     }
     if (goal.pred) {
       p.label("RMSE vs steps", 36, 14, { fill: "#2563eb" });
-      p.line(history.map((h) => h.t), history.map((h) => h.rmse), "#2563eb", 1.4);
-      p.dots(history.map((h) => [h.t, h.rmse] as [number, number]), "#2563eb", 2);
+      p.line(
+        history.map((h) => h.t),
+        history.map((h) => h.rmse),
+        "#2563eb",
+        1.4,
+      );
+      p.dots(
+        history.map((h) => [h.t, h.rmse] as [number, number]),
+        "#2563eb",
+        2,
+      );
       return;
     }
-    const names = { ell: "log q(ℓ)", scale: "log q(σ)", kernel: "log q(kernel)" };
+    const names = {
+      ell: "log q(ℓ)",
+      scale: "log q(σ)",
+      kernel: "log q(kernel)",
+    };
     seriesKeys.forEach((k, i) => {
       p.label(names[k], 36, 14 + 17 * i, { fill: LATENT_COLOR[k] });
-      p.line(history.map((h) => h.t), history.map((h) => h[k]), LATENT_COLOR[k], 1.4);
-      p.dots(history.map((h) => [h.t, h[k]] as [number, number]), LATENT_COLOR[k], 2);
+      p.line(
+        history.map((h) => h.t),
+        history.map((h) => h[k]),
+        LATENT_COLOR[k],
+        1.4,
+      );
+      p.dots(
+        history.map((h) => [h.t, h[k]] as [number, number]),
+        LATENT_COLOR[k],
+        2,
+      );
     });
   }
 
@@ -678,16 +791,35 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     const dS = lastStep?.scale;
     const peak = Math.max(...(dE?.probs ?? [0]), ...(dS?.probs ?? [0]), 1e-12);
     const p = makePlot(latentsCanvas, {
-      xDomain: [Math.min(ellMeta.bound_lo, scaleMeta.bound_lo), Math.max(ellMeta.bound_hi, scaleMeta.bound_hi)],
+      xDomain: [
+        Math.min(ellMeta.bound_lo, scaleMeta.bound_lo),
+        Math.max(ellMeta.bound_hi, scaleMeta.bound_hi),
+      ],
       yDomain: [0, 1.15 * peak],
       padding: { l: 8, r: 6, t: 8, b: 14 },
     });
     p.clear();
     p.axes();
-    if (dS) p.line(dS.grid, dS.probs, goal.scale ? LATENT_COLOR.scale : LATENT_DIM.scale, goal.scale ? 2 : 1.2);
-    if (dE) p.line(dE.grid, dE.probs, goal.ell ? LATENT_COLOR.ell : LATENT_DIM.ell, goal.ell ? 2 : 1.2);
-    p.label(`log ℓ${goal.ell ? " (goal)" : ""}`, 14, 14, { fill: LATENT_COLOR.ell });
-    p.label(`log σ${goal.scale ? " (goal)" : ""}`, 14, 31, { fill: LATENT_COLOR.scale });
+    if (dS)
+      p.line(
+        dS.grid,
+        dS.probs,
+        goal.scale ? LATENT_COLOR.scale : LATENT_DIM.scale,
+        goal.scale ? 2 : 1.2,
+      );
+    if (dE)
+      p.line(
+        dE.grid,
+        dE.probs,
+        goal.ell ? LATENT_COLOR.ell : LATENT_DIM.ell,
+        goal.ell ? 2 : 1.2,
+      );
+    p.label(`log ℓ${goal.ell ? " (goal)" : ""}`, 14, 14, {
+      fill: LATENT_COLOR.ell,
+    });
+    p.label(`log σ${goal.scale ? " (goal)" : ""}`, 14, 31, {
+      fill: LATENT_COLOR.scale,
+    });
     if (mode === "episode" && draw && revealTruth) {
       p.vline(draw.logEll, LATENT_COLOR.ell, 1, [4, 3]);
       p.vline(draw.logScale, LATENT_COLOR.scale, 1, [4, 3]);
@@ -704,16 +836,21 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     p.clear();
     p.axes();
     for (let i = 0; i < probs.length; i++) {
-      const isTruth = mode === "episode" && draw !== null && revealTruth && draw.kernel === i;
+      const isTruth =
+        mode === "episode" && draw !== null && revealTruth && draw.kernel === i;
       const fill = isTruth
         ? "rgba(22,163,74,0.55)"
         : goal.kernel
           ? "rgba(100,116,139,0.6)"
           : "rgba(100,116,139,0.3)";
       p.rectData(i - 0.32, i + 0.32, 0, probs[i], fill);
-      p.label(KERNEL_SHORT[i], p.xPx(i) - 10, p.height - 8, { fill: "#6b7280" });
+      p.label(KERNEL_SHORT[i], p.xPx(i) - 10, p.height - 8, {
+        fill: "#6b7280",
+      });
     }
-    p.label(`kernel${goal.kernel ? " (goal)" : ""}`, 14, 14, { fill: LATENT_COLOR.kernel });
+    p.label(`kernel${goal.kernel ? " (goal)" : ""}`, 14, 14, {
+      fill: LATENT_COLOR.kernel,
+    });
   }
 
   // --- boot ---
