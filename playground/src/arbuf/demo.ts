@@ -10,6 +10,7 @@
  */
 
 import { ARBUF, KERNEL_LABELS } from "../config";
+import { aceFooter, addInfoButton } from "../explain";
 import { clamp, hitPoint, pointOodReasons } from "../interaction";
 import { makePlot, type Plot } from "../plot";
 import { BufferedACEModel, type CtxCache } from "../ace/buffered";
@@ -39,10 +40,40 @@ const DRAW_COLORS = ["#9333ea", "#ea580c", "#16a34a"];
 const INDEP_COLOR = "rgba(107,114,128,0.45)";
 const SEED0 = 12345;
 
+const EXPLAINER = {
+  title: "About: joint draws with an AR buffer",
+  html: `
+    <h3>The task</h3>
+    <p>ACE is a diagonal prediction map: it returns independent per-point marginals. Those
+    answer "what is f(x) at this location?", but sampling each grid point independently
+    produces the gray jagged lines — they ignore correlations between locations and do not
+    look like functions. Coherent whole-function samples require the joint distribution over
+    all grid points.</p>
+    <h3>What this tab is doing</h3>
+    <p>Joint samples come from the autoregressive (AR) factorization
+    p(y<sub>1</sub>, …, y<sub>K</sub> | context) = Π<sub>k</sub> p(y<sub>k</sub> |
+    y<sub>&lt;k</sub>, context): predict one location, sample it, condition on the sample,
+    repeat. The standard implementation re-encodes the entire context plus all realized points
+    at every step. Our causal AR buffer instead encodes the context once, caches it, and routes
+    each realized sample through a separate causal stream that later steps attend to. Each
+    colored curve is one draw decoded against the same cached encoding; Resample reuses the
+    cache, and the timing line below the plot shows the split.</p>
+    <h3>Compared with the standard approach</h3>
+    <p>The factorization is identical; the cost is not. Re-encoding costs O(K·(N+K)²) attention
+    work over a K-step chain; the buffer costs O(N² + K·(N+K)). In this page's implementation
+    that is the difference between several seconds and a fraction of a second per resample —
+    it is what makes the tab interactive. The model is a fine-tuned extension of the GP-1D
+    model (the buffer stream is the new part; the blue band is its ordinary marginal
+    prediction), so pinned latents condition the draws too.</p>
+    ${aceFooter(
+      // OpenReview link is deliberate for now; switch to the paper's project page later.
+      'The buffer mechanism follows Hassan et al. (2026), <em>Efficient Autoregressive Inference for Transformer Probabilistic Models</em> (ICLR 2026) — <a href="https://openreview.net/forum?id=5bfUqlOhAH">OpenReview</a>.',
+    )}`,
+};
+
 const CSS = `
 .ab-root { display: flex; flex-direction: column; gap: 12px; }
 .ab-hint { color: var(--muted); margin: 0; }
-.ab-note { color: var(--muted); margin: 0; font-size: 12px; }
 .ab-top { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
 .ab-plot-col { display: flex; flex-direction: column; gap: 6px; }
 .ab-main { border: 1px solid var(--line); border-radius: 8px; background: #fff; touch-action: none; }
@@ -71,19 +102,23 @@ function injectCss(): void {
 }
 
 const raf: (cb: () => void) => void =
-  typeof requestAnimationFrame === "function" ? (cb) => requestAnimationFrame(() => cb()) : (cb) => {
-    setTimeout(cb, 16);
-  };
+  typeof requestAnimationFrame === "function"
+    ? (cb) => requestAnimationFrame(() => cb())
+    : (cb) => {
+        setTimeout(cb, 16);
+      };
 
 export async function mountArbuf(el: HTMLElement): Promise<void> {
   injectCss();
   let model: BufferedACEModel;
   try {
-    const weights = await loadWeights(`${import.meta.env.BASE_URL}models/gp1d_arbuffer`);
+    const weights = await loadWeights(
+      `${import.meta.env.BASE_URL}models/gp1d_arbuffer`,
+    );
     model = new BufferedACEModel(weights);
   } catch {
     el.innerHTML = `<p class="loading">The AR-buffer model is not part of this deployment yet
-      (the tab is local-only until the retained fine-tune ships). To run it locally, export the
+      (the tab is local-only for now). To run it locally, export the
       weights with <code>export_weights.py --task gp1d_arbuffer</code> — see the
       "Run locally" section of <code>playground/README.md</code>.</p>`;
     return;
@@ -126,7 +161,6 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
       the context is encoded <em>once</em> and cached; each colored curve is decoded autoregressively
       against that cache. Gray curves are independent per-point samples from the diagonal marginals —
       same model, no coherence. Click to add a point · drag to move · shift-click to delete.</p>
-    <p class="ab-note">Preliminary 20k fine-tune model (K=128 settings); a longer retained run is planned.</p>
     <div class="ab-top">
       <div class="ab-plot-col">
         <canvas class="ab-main" width="660" height="380" style="width:660px;height:380px;"></canvas>
@@ -162,6 +196,7 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
     </div>
   `;
   el.appendChild(root);
+  addInfoButton(root.querySelector<HTMLElement>(".ab-hint")!, EXPLAINER);
 
   const mainCanvas = root.querySelector<HTMLCanvasElement>(".ab-main")!;
   const statusEl = root.querySelector<HTMLParagraphElement>(".ab-status")!;
@@ -217,18 +252,24 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
   animateBox.addEventListener("change", () => {
     animate = animateBox.checked;
   });
-  root.querySelector<HTMLButtonElement>(".ab-resample")!.addEventListener("click", () => {
-    resample();
-  });
-  root.querySelector<HTMLButtonElement>(".reset")!.addEventListener("click", () => {
-    points.length = 0;
-    points.push(...defaultPoints.map((p) => ({ ...p })));
-    onContextChange();
-  });
-  root.querySelector<HTMLButtonElement>(".clear")!.addEventListener("click", () => {
-    points.length = 0;
-    onContextChange();
-  });
+  root
+    .querySelector<HTMLButtonElement>(".ab-resample")!
+    .addEventListener("click", () => {
+      resample();
+    });
+  root
+    .querySelector<HTMLButtonElement>(".reset")!
+    .addEventListener("click", () => {
+      points.length = 0;
+      points.push(...defaultPoints.map((p) => ({ ...p })));
+      onContextChange();
+    });
+  root
+    .querySelector<HTMLButtonElement>(".clear")!
+    .addEventListener("click", () => {
+      points.length = 0;
+      onContextChange();
+    });
 
   // pointer interaction (GP-tab semantics)
   let mainPlot: Plot | null = null;
@@ -238,7 +279,13 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
   mainCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
   mainCanvas.addEventListener("pointerdown", (e) => {
     if (!mainPlot) return;
-    const hit = hitPoint(points, mainPlot, e.offsetX, e.offsetY, ARBUF.HIT_RADIUS_PX);
+    const hit = hitPoint(
+      points,
+      mainPlot,
+      e.offsetX,
+      e.offsetY,
+      ARBUF.HIT_RADIUS_PX,
+    );
     if (hit !== null && (e.shiftKey || e.button === 2)) {
       points.splice(hit, 1);
       onContextChange();
@@ -249,12 +296,18 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
       mainCanvas.setPointerCapture(e.pointerId);
       return;
     }
-    points.push({ x: clampX(mainPlot.pxToX(e.offsetX)), y: clampY(mainPlot.pxToY(e.offsetY)) });
+    points.push({
+      x: clampX(mainPlot.pxToX(e.offsetX)),
+      y: clampY(mainPlot.pxToY(e.offsetY)),
+    });
     onContextChange();
   });
   mainCanvas.addEventListener("pointermove", (e) => {
     if (dragIdx === null || !mainPlot) return;
-    points[dragIdx] = { x: clampX(mainPlot.pxToX(e.offsetX)), y: clampY(mainPlot.pxToY(e.offsetY)) };
+    points[dragIdx] = {
+      x: clampX(mainPlot.pxToX(e.offsetX)),
+      y: clampY(mainPlot.pxToY(e.offsetY)),
+    };
     onContextChange();
   });
   const endDrag = () => {
@@ -276,7 +329,10 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
   function grid(): number[] {
     const n = ARBUF.GRID_POINTS;
     const out = new Array<number>(n);
-    for (let i = 0; i < n; i++) out[i] = ARBUF.X_DOMAIN[0] + ((ARBUF.X_DOMAIN[1] - ARBUF.X_DOMAIN[0]) * i) / (n - 1);
+    for (let i = 0; i < n; i++)
+      out[i] =
+        ARBUF.X_DOMAIN[0] +
+        ((ARBUF.X_DOMAIN[1] - ARBUF.X_DOMAIN[0]) * i) / (n - 1);
     return out;
   }
 
@@ -308,7 +364,10 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
     const myEpoch = epoch;
     const rng = mulberry32(SEED0 + seedCounter++);
     indep = sampleIndependent(stat, ARBUF.DRAWS, rng);
-    sampler = new JointSampler(model, cache, stat.grid, { nDraws: ARBUF.DRAWS, rng });
+    sampler = new JointSampler(model, cache, stat.grid, {
+      nDraws: ARBUF.DRAWS,
+      rng,
+    });
     decodeMs = 0;
 
     if (!animate) {
@@ -337,11 +396,15 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
       yIsOod: (y) => Math.abs(y) > ARBUF.Y_OOD,
       yReason: `beyond training y-range (|y| > ${ARBUF.Y_OOD})`,
       maxPoints: ARBUF.MAX_CONTEXT_HINT,
-      maxReason: (n) => `${n} points (training used ≤ ${ARBUF.MAX_CONTEXT_HINT})`,
+      maxReason: (n) =>
+        `${n} points (training used ≤ ${ARBUF.MAX_CONTEXT_HINT})`,
     });
-    const nPinned = (pin.kernel !== null ? 1 : 0) + (pin.ell ? 1 : 0) + (pin.scale ? 1 : 0);
+    const nPinned =
+      (pin.kernel !== null ? 1 : 0) + (pin.ell ? 1 : 0) + (pin.scale ? 1 : 0);
     if (points.length === 0 && nPinned > 0) {
-      reasons.push("latent-only context (training used at least 4 data points)");
+      reasons.push(
+        "latent-only context (training used at least 4 data points)",
+      );
     }
     return reasons;
   }
@@ -358,9 +421,18 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
   }
 
   function basePlot(): Plot {
-    const p = makePlot(mainCanvas, { xDomain: ARBUF.X_DOMAIN, yDomain: ARBUF.Y_VIEW });
+    const p = makePlot(mainCanvas, {
+      xDomain: ARBUF.X_DOMAIN,
+      yDomain: ARBUF.Y_VIEW,
+    });
     p.clear();
-    p.rectData(ARBUF.X_DOMAIN[0], ARBUF.X_DOMAIN[1], ARBUF.Y_NORMAL[0], ARBUF.Y_NORMAL[1], "rgba(37,99,235,0.05)");
+    p.rectData(
+      ARBUF.X_DOMAIN[0],
+      ARBUF.X_DOMAIN[1],
+      ARBUF.Y_NORMAL[0],
+      ARBUF.Y_NORMAL[1],
+      "rgba(37,99,235,0.05)",
+    );
     p.hline(0, "#eceef2", 1);
     return p;
   }
@@ -372,7 +444,11 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
     ctx.fillStyle = "#9ca3af";
     ctx.font = "14px system-ui";
     ctx.textAlign = "center";
-    ctx.fillText("Add a point or pin a latent to draw joint samples.", mainPlot.width / 2, mainPlot.height / 2);
+    ctx.fillText(
+      "Add a point or pin a latent to draw joint samples.",
+      mainPlot.width / 2,
+      mainPlot.height / 2,
+    );
     ctx.textAlign = "start";
     statusEl.textContent = "";
   }
@@ -396,28 +472,46 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
       }
       const color = DRAW_COLORS[b % DRAW_COLORS.length];
       if (pts.length > 1) {
-        mainPlot.line(pts.map((p) => p[0]), pts.map((p) => p[1]), color, 1.4);
+        mainPlot.line(
+          pts.map((p) => p[0]),
+          pts.map((p) => p[1]),
+          color,
+          1.4,
+        );
       }
       mainPlot.dots(pts, color, 2);
     }
 
     mainPlot.dots(
-      points.filter((p) => Math.abs(p.y) <= ARBUF.Y_OOD).map((p) => [p.x, p.y] as [number, number]),
+      points
+        .filter((p) => Math.abs(p.y) <= ARBUF.Y_OOD)
+        .map((p) => [p.x, p.y] as [number, number]),
       "#111827",
       4,
     );
     mainPlot.dots(
-      points.filter((p) => Math.abs(p.y) > ARBUF.Y_OOD).map((p) => [p.x, p.y] as [number, number]),
+      points
+        .filter((p) => Math.abs(p.y) > ARBUF.Y_OOD)
+        .map((p) => [p.x, p.y] as [number, number]),
       "#b45309",
       4,
     );
     mainPlot.axes();
     mainPlot.label("diagonal ±2σ (context only)", 50, 16, { fill: "#2563eb" });
     mainPlot.label("independent marginal samples", 50, 30, { fill: "#6b7280" });
-    mainPlot.label(`${sampler.values.length} coherent draws (AR buffer)`, 50, 44, { fill: DRAW_COLORS[0] });
+    mainPlot.label(
+      `${sampler.values.length} coherent draws (AR buffer)`,
+      50,
+      44,
+      { fill: DRAW_COLORS[0] },
+    );
 
     const reasons = oodReasons();
-    mainPlot.warning(reasons.length ? `Out of training distribution: ${reasons.join(" / ")}` : "");
+    mainPlot.warning(
+      reasons.length
+        ? `Out of training distribution: ${reasons.join(" / ")}`
+        : "",
+    );
 
     const k = stat.grid.length;
     const stepsDone = sampler.steps;

@@ -33,7 +33,7 @@ function stubGlobals(): void {
   const noop = new Proxy({}, { get: () => () => {}, set: () => true });
   HTMLCanvasElement.prototype.getContext = (() => noop) as unknown as HTMLCanvasElement["getContext"];
   // Synchronous rAF: the animated decode drains inside the triggering call
-  // (recursion depth = GRID_POINTS / STEPS_PER_FRAME = 32, well within limits).
+  // (recursion depth = GRID_POINTS / STEPS_PER_FRAME = 64, well within limits).
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
     cb(0);
     return 0;
@@ -62,6 +62,14 @@ describe.skipIf(!HAVE)("AR-buffer demo UI smoke", () => {
     kernelBtns[4].click();
     el.querySelector<HTMLButtonElement>(".clear")!.click();
     el.querySelector<HTMLButtonElement>(".reset")!.click();
+
+    // Per-tab explainer opens and closes.
+    const modal = el.querySelector<HTMLElement>(".explain-modal")!;
+    expect(modal.hidden).toBe(true);
+    el.querySelector<HTMLButtonElement>(".info-btn")!.click();
+    expect(modal.hidden).toBe(false);
+    modal.querySelector<HTMLButtonElement>(".ace-modal-close")!.click();
+    expect(modal.hidden).toBe(true);
   });
 });
 

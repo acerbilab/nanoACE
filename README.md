@@ -83,13 +83,17 @@ Implemented modules:
   `ace.py`'s forward pass.
 - [extensions/arbuffer/](extensions/arbuffer/): a **non-core** extension adding
   the causal autoregressive buffer of Hassan et al. (2026) on top of a trained
-  GP-1D checkpoint — warm-started bit-exactly, base frozen, only the new buffer
-  stream fine-tuned. Encodes the context once and draws many coherent joint
+  GP-1D checkpoint. Two target-read variants: a separate zero-init gated read
+  (bit-exact warm start, frozen base) and the retained paper-style
+  `--concat-read` (one softmax over `[context, buffer]` keys, joint fine-tune;
+  ~95% of the slow-AR joint-density gap recovered at the 20k validation
+  budget). Encodes the context once and draws many coherent joint
   function samples from the cached encoding (vs `sample_ar`'s per-step
   re-encoding), plus one-pass joint density evaluation. Also the repository's
   extensibility demo (no core file changes). A local-only playground tab runs
-  its incremental sampler in the browser (preliminary 20k weights, exported
-  locally and not deployed until the retained fine-tune lands). See
+  its incremental sampler in the browser — the TS port follows the retained
+  concat-read architecture, with the retained 200k weights exported locally
+  (not yet deployed). See
   [extensions/arbuffer/README.md](extensions/arbuffer/README.md).
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
@@ -101,9 +105,11 @@ Local `artifacts/` and `playground/public/models/` remain gitignored in nanoACE.
 
 Next work: inspect the deployed Pages build against the public weights, add
 manifest-level training provenance on the next export, consider whether the
-shared prior path warrants a discrete-latent runtime prior, and run the
-retained AR-buffer fine-tune — 200k steps at the K=128 settings
-(`extensions/arbuffer/`, a fresh run, not a resume of the 20k validation runs).
+shared prior path warrants a discrete-latent runtime prior, and decide
+whether/when to deploy the AR-buffer tab (the retained 200k concat-read
+artifact — ~97% of the slow-AR gap — is already swapped into the local tab;
+deploying means publishing the `gp1d_arbuffer` blob to the weights repo and
+adding it to the Pages workflow's expected models).
 
 ## Setup
 

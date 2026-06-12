@@ -9,12 +9,40 @@
  */
 
 import { GAUSSIAN } from "../config";
+import { aceFooter, addInfoButton } from "../explain";
 import { makePlot, type Plot } from "../plot";
 import { ACEModel } from "../ace/model";
 import { loadWeights } from "../ace/weights";
 import { linspace, normalize } from "../util";
 import { gaussInfer, type GaussGrids } from "./infer";
 import { analyticPosterior, betaLogPriorOnGrid, predictiveDensity } from "./oracle";
+
+const EXPLAINER = {
+  title: "About: Gaussian (μ, σ) with priors",
+  html: `
+    <h3>The task</h3>
+    <p>Estimate the mean μ and standard deviation σ of a Gaussian from a handful of
+    observations, combining them with prior beliefs. This is textbook Bayesian inference: the
+    exact posterior p(μ, σ | y) is computable, and the green curves show it (evaluated
+    numerically on a grid).</p>
+    <h3>What ACE is doing</h3>
+    <p>Observations enter as data tokens; μ and log σ are latent tokens queried for their
+    posteriors; and the priors you set with the sliders enter as <em>prior tokens</em> — a
+    compact (mean, spread) summary of a
+    <a href="https://en.wikipedia.org/wiki/Beta_distribution">Beta distribution</a> on each
+    latent's range. The network
+    was trained on synthetic datasets whose true (μ, σ) were drawn from random priors of this
+    family, so one forward pass returns the posterior marginals and the posterior predictive,
+    conditioned on your data <em>and</em> your prior.</p>
+    <h3>Compared with the classical approach</h3>
+    <p>On this toy, classical inference is easy and exact — deliberately, so you can see how
+    close the amortized answer gets (blue vs green). What the tab demonstrates is the
+    conditioning interface: amortized-inference networks usually fix the prior at training time,
+    so changed prior beliefs mean retraining; here the prior is an input. Move a slider and the
+    posterior updates immediately, with no retraining and no new derivation. Any gap between
+    blue and green is the amortization error of a small in-browser model.</p>
+    ${aceFooter()}`,
+};
 
 const CSS = `
 .ga-root { display: flex; flex-direction: column; gap: 12px; }
@@ -117,6 +145,7 @@ export async function mountGaussian(el: HTMLElement): Promise<void> {
     </div>
   `;
   el.appendChild(root);
+  addInfoButton(root.querySelector<HTMLElement>(".ga-hint")!, EXPLAINER);
 
   const mainCanvas = root.querySelector<HTMLCanvasElement>(".ga-main")!;
   const muCanvas = root.querySelector<HTMLCanvasElement>(".ga-mu")!;

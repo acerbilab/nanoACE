@@ -24,8 +24,10 @@ parent), the GP physics (`gp1d.draw_instances`), `ace.sample_ar` as the
 baseline, and `gp1d.evaluate`'s oracle diagnostic (which runs verbatim on the
 buffered model).
 
-New in this folder: one `BufferBlock` per layer (buffer attention + MLP and the
-gated target→buffer read), the cached incremental sampler (`sample_joint`), the
+New in this folder: one `BufferBlock` per layer (buffer attention + MLP and a
+target→buffer read in one of two variants — the default separate zero-init
+gated cross-attention, or the paper's single concatenated softmax via
+`--concat-read`), the cached incremental sampler (`sample_joint`), the
 one-pass joint density evaluation (`joint_log_prob`), and a three-way
 context / buffer / target fine-tune sampler.
 
@@ -53,22 +55,51 @@ work (its Discussion suggests applying the buffer to pretrained NPs/PFNs); the
 paper itself trains jointly from scratch. Deviations from the paper and their
 rationale are recorded in the local [DEVLOG.md](DEVLOG.md).
 
+## The concat read (`--concat-read`, the retained variant)
+
+`--concat-read` replaces step 2's separate read with the paper's own target
+decoder: **one softmax over the concatenated `[context, visible buffer
+prefix]` keys** through the base cross-attention — `sample_ar`'s
+append-to-context semantics — plus a learned per-head logit bias on the buffer
+keys as a soft gate (`--buf-bias-init`, default −5, injected as an additive
+float attention mask). One fewer attention op per layer, and no prefix-0
+special case.
+
+Bitwise warm starts are impossible in this read: the pretrained GP attention
+is sharp enough (logits ~±30 on x-proximity) that no trainable bias can shut
+relevant buffer keys out, so the step-0 check reports a drift instead of
+asserting equality (the plain forward stays bit-checked). That turns out to be
+a feature — at init the buffer enters the read as appended context, so the
+model *starts* near slow-AR joint quality instead of learning buffer use from
+a closed gate. Validated at 20k (K=64, with `--no-freeze-base`): **~95% of
+the slow-AR gap recovered** vs 76% for the frozen zero-init read at equal
+budget, with no marginal degradation (the paper's 50/50 context-only
+curriculum auto-restores when the base unfreezes). The retained fine-tune uses
+this mode; the design discussion is in the local [DEVLOG.md](DEVLOG.md).
+
 ## Run
 
 From the repo root, with a trained GP-1D checkpoint (`python gp1d.py
 --save-checkpoint artifacts/gp1d.pt`):
 
 ```powershell
-# fine-tune the buffer (frozen base; ~800k trainable of ~2.0M params)
+# fine-tune the buffer (default mode: separate read, frozen base;
+# ~800k trainable of ~2.0M params)
 .\.venv\Scripts\python.exe extensions\arbuffer\gp1d_arbuffer.py `
     --base-checkpoint artifacts\gp1d.pt --save-checkpoint artifacts\gp1d_arbuffer.pt
+
+# retained fine-tune recipe (paper-style concat read, joint training, 200k)
+.\.venv\Scripts\python.exe extensions\arbuffer\gp1d_arbuffer.py `
+    --steps 200000 --concat-read --no-freeze-base `
+    --save-checkpoint artifacts\gp1d_arbuffer.pt --ckpt-every 5000
 
 # short smoke run
 .\.venv\Scripts\python.exe extensions\arbuffer\gp1d_arbuffer.py --steps 20 --batch-size 16
 
-# reuse a fine-tuned checkpoint (demo + diagnostics only)
+# reuse a fine-tuned checkpoint (demo + diagnostics only; the read mode is
+# inferred from the checkpoint)
 .\.venv\Scripts\python.exe extensions\arbuffer\gp1d_arbuffer.py `
-    --eval-only --load-checkpoint artifacts\gp1d_arbuffer.pt
+    --eval-only --load-checkpoint artifacts\gp1d_arbuffer.pt --no-freeze-base
 ```
 
 Common artifacts: `artifacts/gp1d_arbuffer.pt`, `artifacts/gp1d_arbuffer.png`.
@@ -98,9 +129,10 @@ warm-start check, the base-parity assert, and `gp1d.evaluate`):
   (re-encoding `sample_ar` path) vs buffered one-pass, scored on *identical*
   orderings, plus order-averaging (autoregressive densities are
   order-dependent).
-- **Frozen-base parity** — the empty-buffer predictions are asserted bit-equal
-  to the source checkpoint, and `gp1d.evaluate`'s oracle diagnostic runs on the
-  buffered model unchanged.
+- **Base parity** — with a frozen base, the empty-buffer predictions are
+  asserted bit-equal to the source checkpoint; under `--no-freeze-base` the
+  drift is reported instead (expected — the marginals trained). Either way
+  `gp1d.evaluate`'s oracle diagnostic runs on the buffered model unchanged.
 - **Measured wall-clock** for B×K coherent sampling, `sample_ar` vs
   `sample_joint`.
 
@@ -120,5 +152,8 @@ Like `playground/`, this folder is **not part of the core**: `ace.py`,
 `train.py`, and the examples are unchanged and never import it. Unlike the
 playground it is torch-only and *may* reach into core internals (it subclasses
 `ACE`, calls `_embed`, and re-implements `ACEBlock`'s op order around the
-buffer stream) — the automatic step-0 bitwise parity check is what keeps that
+buffer stream) — the automatic step-0 parity check is what keeps that
 coupling honest: if the core forward changes, the warm start fails loudly.
+(The check is bitwise for the plain forward in both read modes and for the
+buffered forward in the default separate-read mode; the concat read's buffered
+drift is reported, since exactness is impossible there by design.)

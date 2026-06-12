@@ -13,6 +13,36 @@ self-skip story to hold in CI).
 Amended 2026-06-11 (user decision): the sampling grid is **fixed at 32 points** — the
 grid-size selector was removed (`ARBUF.GRID_POINTS = 32`; `STEPS_PER_FRAME` lowered to
 1 so the animated reveal stays visible at the shorter chain).
+Amended 2026-06-11 (later, user decision): the extension switched its retained
+architecture to the **concat read** (one softmax over `[context, buffer]` keys through
+the base `cross_attn`, learned per-head `buf_bias` soft gate — see the extension
+DEVLOG's concat-read entry), and the playground followed: `buffered.ts` now implements
+the concat read **only** (separate-read blobs rejected at load with a clear error;
+fixtures can only honestly cover the shipped architecture), the per-draw read cache is
+`kv_ln(state)` projected under the base `cross_attn`, there is no step-0 special case
+(an empty buffer reduces exactly to the base read), and `parity.py`'s packed
+replication mirrors both `forward_buffered` branches and records the mode in the
+fixture. `ARBUF_CKPT` → `artifacts/gp1d_arbuffer_concat20k.pt` (20k, K=64, joint
+training); blob re-exported + fixtures regenerated together; all 27 tests pass. One
+tolerance note: the arbuf parity RAW atol widened 1e-4 → 3e-4 — the unfrozen
+checkpoint's weights accumulate slightly more float32-vs-float64 drift on intermediate
+layer states (worst observed exceedance 1.8e-4 on one element of a plain-forward
+case); still orders of magnitude below any real porting bug. The retained 200k concat
+run (in flight, → `artifacts/gp1d_arbuffer.pt`) swaps in by repointing `ARBUF_CKPT`
+and re-running export + parity together.
+Amended 2026-06-12: the retained 200k concat run completed and was **swapped in**
+(`ARBUF_CKPT` → `artifacts/gp1d_arbuffer.pt`; blob + fixtures regenerated together;
+all tests green at the same tolerances). The in-tab model-provenance note was removed
+(user decision: not something the tab's audience needs; provenance lives in the docs).
+Also added (separate small feature): per-tab "?" explainer modals via
+`playground/src/explain.ts`. The fixed grid moved 32 → **64** (user decision) to match
+the retained fine-tune's K=64 — a 64-step chain exercises exactly the trained prefix
+range; decode ≈ 0.7 s, animation ≈ 1 s at one step per frame.
+Measured (2026-06-12, node V8, throwaway probe, 3 draws): buffered decode incl. encode
+vs slow-AR re-encoding via the plain forward — 4 ctx pts × 32 steps: 0.33 s vs 3.8 s
+(~11×); ×128 steps: 1.6 s vs 68 s (~43×); 14 ctx pts: 0.42 s vs 6.1 s (~14×) and
+1.2 s vs 78 s (~63×). In scalar JS the FLOP asymptotics show directly (unlike the
+launch-bound GPU timings at nano scale); the buffer is what makes the tab interactive.
 
 Adds a fifth playground tab that runs the `extensions/arbuffer/` buffered GP-1D model
 in the browser: edit context points (and pin latents) exactly like the GP tab, then

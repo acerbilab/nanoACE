@@ -49,5 +49,13 @@ describe("BO demo UI smoke", () => {
 
     el.querySelector<HTMLButtonElement>(".clear")!.click();
     expect(el.querySelector(".bo-main")).not.toBeNull();
+
+    // Per-tab explainer opens and closes.
+    const modal = el.querySelector<HTMLElement>(".explain-modal")!;
+    expect(modal.hidden).toBe(true);
+    el.querySelector<HTMLButtonElement>(".info-btn")!.click();
+    expect(modal.hidden).toBe(false);
+    modal.querySelector<HTMLButtonElement>(".ace-modal-close")!.click();
+    expect(modal.hidden).toBe(true);
   });
 });

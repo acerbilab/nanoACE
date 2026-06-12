@@ -39,10 +39,11 @@ from extensions.arbuffer.arbuffer import (  # noqa: E402  (non-core extension)
 
 OUT_DIR = Path(__file__).resolve().parent / "test" / "fixtures"
 
-# Temporary 20k validation fine-tune (K=128 settings); swap for the retained run by
-# re-running export_weights.py and this script together. Fixtures are skipped (with a
-# note) when the artifact is absent, so the four core fixture sets stay regenerable.
-ARBUF_CKPT = REPO_ROOT / "artifacts" / "gp1d_arbuffer_k128.pt"
+# The retained AR-buffer fine-tune (200k, concat read, K=64, joint training). On a
+# retrain, re-run export_weights.py and this script together. Fixtures are skipped
+# (with a note) when the artifact is absent, so the four core fixture sets stay
+# regenerable.
+ARBUF_CKPT = REPO_ROOT / "artifacts" / "gp1d_arbuffer.pt"
 
 
 class TokenBuilder:
@@ -530,21 +531,28 @@ def arbuf_packed_case(model) -> dict:
     bbatch = BufferedBatch(model.variables, context, buffer, target, prefix)
 
     # Replicate forward_buffered step by step to capture per-layer states (the same
-    # pattern as run_case's manual replication of ACE.forward).
+    # pattern as run_case's manual replication of ACE.forward). Both read modes are
+    # mirrored so the sanity-assert below stays meaningful for either checkpoint.
     ctx = model._embed(context)
     buf = model._embed(buffer)
     tgt = model._embed(target)
     kp_ctx = ~context.mask
     b, n = context.mask.shape
+    m = tgt.shape[1]
+    heads = model.cfg.n_heads
     kp_ctx_buf = torch.cat([kp_ctx, torch.zeros(b, k, dtype=torch.bool, device=device)], dim=1)
     ar = torch.arange(k, device=device)
     causal = torch.zeros(k, n + k, dtype=torch.bool, device=device)
     causal[:, n:] = ar[None, :] > ar[:, None]
     blocked = ar[None, None, :] >= prefix[:, :, None]
-    zero_prefix = prefix == 0
-    blocked[..., 0] = blocked[..., 0] & ~zero_prefix
-    prefix_mask = blocked.repeat_interleave(model.cfg.n_heads, dim=0)
-    gate = (~zero_prefix).to(tgt.dtype).unsqueeze(-1)
+    if model.concat_read:
+        blocked_all = torch.cat([kp_ctx[:, None, :].expand(b, m, n), blocked], dim=2)
+        blocked_all = blocked_all[:, None].expand(b, heads, m, n + k)
+    else:
+        zero_prefix = prefix == 0
+        blocked[..., 0] = blocked[..., 0] & ~zero_prefix
+        prefix_mask = blocked.repeat_interleave(heads, dim=0)
+        gate = (~zero_prefix).to(tgt.dtype).unsqueeze(-1)
 
     per_ctx, per_buf, per_tgt = [], [], []
     for blk, bblk in zip(model.blocks, model.buf_blocks):
@@ -560,12 +568,20 @@ def arbuf_packed_case(model) -> dict:
         )
         buf = buf + buf_att
         buf = buf + bblk.buf_mlp(bblk.buf_ln2(buf))
-        kv_c = blk.kv_ln(ctx)
-        tgt_att, _ = blk.cross_attn(blk.tgt_ln1(tgt), kv_c, kv_c, key_padding_mask=kp_ctx, need_weights=False)
-        tgt = tgt + tgt_att
-        kv_b = bblk.tgt_buf_kvln(buf)
-        read, _ = bblk.tgt_buf_attn(bblk.tgt_buf_qln(tgt), kv_b, kv_b, attn_mask=prefix_mask, need_weights=False)
-        tgt = tgt + read * gate
+        if model.concat_read:
+            kv = blk.kv_ln(torch.cat([ctx, buf], dim=1))
+            fmask = torch.zeros(b, heads, m, n + k, dtype=tgt.dtype, device=device)
+            fmask[..., n:] = bblk.buf_bias.view(1, heads, 1, 1)
+            fmask = fmask.masked_fill(blocked_all, float("-inf")).reshape(b * heads, m, n + k)
+            tgt_att, _ = blk.cross_attn(blk.tgt_ln1(tgt), kv, kv, attn_mask=fmask, need_weights=False)
+            tgt = tgt + tgt_att
+        else:
+            kv_c = blk.kv_ln(ctx)
+            tgt_att, _ = blk.cross_attn(blk.tgt_ln1(tgt), kv_c, kv_c, key_padding_mask=kp_ctx, need_weights=False)
+            tgt = tgt + tgt_att
+            kv_b = bblk.tgt_buf_kvln(buf)
+            read, _ = bblk.tgt_buf_attn(bblk.tgt_buf_qln(tgt), kv_b, kv_b, attn_mask=prefix_mask, need_weights=False)
+            tgt = tgt + read * gate
         tgt = tgt + blk.tgt_mlp(blk.tgt_ln2(tgt))
         ctx = ctx * context.mask.unsqueeze(-1)
         tgt = tgt * target.mask.unsqueeze(-1)
@@ -665,8 +681,11 @@ def main() -> None:
         arb_model.eval()
         quantize_fp16_inplace(arb_model)  # match the shipped fp16 weights
         payload = {
-            # plain-forward cases on the buffered checkpoint: the frozen-base
-            # invariant extended through the export (reuses the GP case builders).
+            # The TS port implements the concat read only; record the mode so the
+            # TS test fails with a clear message on a separate-read fixture.
+            "concat_read": bool(arb_model.concat_read),
+            # plain-forward cases on the buffered checkpoint (reuses the GP case
+            # builders): pins the inherited base path through the export.
             "plain": gp_cases(arb_model),
             "packed": arbuf_packed_case(arb_model),
             "chain": arbuf_chain_case(arb_model),

@@ -187,7 +187,11 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   **no core file** — it imports the core (and may subclass its internals) from the repo
   root via the playground's `sys.path` bootstrap pattern. Currently:
   `extensions/arbuffer/`, a causal autoregressive buffer (Hassan et al., 2026) warm-started
-  from a trained GP-1D checkpoint with a frozen base — fast coherent joint function
-  sampling via one cached context encoding. An automatic step-0 bitwise parity check
-  guards the coupling to core internals: if `ace.py`'s forward changes, the warm start
-  fails loudly.
+  from a trained GP-1D checkpoint — fast coherent joint function sampling via one cached
+  context encoding. Two target-read modes: the default separate zero-init gated read
+  (bit-exact warm start, frozen base) and the retained paper-style `--concat-read`
+  (one softmax over `[context, buffer]` keys + a learned per-head logit bias, joint
+  fine-tune with the 50/50 curriculum). An automatic step-0 parity check guards the
+  coupling to core internals (bitwise for the plain forward in both modes and for the
+  buffered forward in separate-read mode; reported drift for the concat read): if
+  `ace.py`'s forward changes, the warm start fails loudly.

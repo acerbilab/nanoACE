@@ -9,6 +9,24 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-12 — Per-tab playground explainers; retained AR-buffer weights swapped in
+
+- **Every playground tab gained a "?" explainer.** A small inline button at the end of
+  each tab's hint line opens a modal with three short didactic sections — the task,
+  what ACE is doing, and how it compares with the classical approach — plus paper
+  attribution (Chang et al. 2025; Hassan et al. 2026 on the AR tab). Deliberately
+  matter-of-fact: each modal names the exact reference where one exists (the green
+  oracle curves) and states the amortization trade-off plainly. Shared chrome in
+  `playground/src/explain.ts` (reusing the global ACE-modal styles); content lives in
+  each tab's `demo.ts`; smoke tests assert open/close.
+- **The AR-buffer tab now serves the retained 200k concat-read weights**
+  (`artifacts/gp1d_arbuffer.pt`, K=64, joint training, ~97% of the slow-AR
+  joint-density gap — see `extensions/arbuffer/DEVLOG.md`): `ARBUF_CKPT` repointed,
+  blob + fixtures regenerated together, all tests green. Still local-only; deploying
+  the tab is a separate decision (weights repo + Pages workflow).
+
+---
+
 ## 2026-06-11 — AR-buffer playground tab (local-only)
 
 - **The playground gained a fifth tab** running the `extensions/arbuffer/` buffered
@@ -17,9 +35,13 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   next to the diagonal band and independent per-point marginal samples. TS port of
   the incremental sampler in `playground/src/ace/buffered.ts` (base port untouched),
   parity-guarded by new buffered fixtures (packed per-layer + teacher-forced chain).
-  **Local-only**: the temporary 20k K=128 checkpoint is exported locally, not
-  deployed — tab and tests self-skip when the blob is absent, so the four-model
-  deploy flow is unchanged. Plan + verification:
+  Same day, the port was switched to the extension's retained **concat-read**
+  architecture (one softmax over `[context, buffer]` keys with the learned per-head
+  `buf_bias` soft gate; separate-read blobs rejected at load), with fixtures
+  regenerated from `gp1d_arbuffer_concat20k.pt`.
+  **Local-only**: the temporary checkpoint is exported locally, not deployed — tab
+  and tests self-skip when the blob is absent, so the four-model deploy flow is
+  unchanged. Plan + verification:
   [docs/plans/PLAN-arbuffer-playground.md](docs/plans/PLAN-arbuffer-playground.md);
   design notes in `extensions/arbuffer/DEVLOG.md`.
 

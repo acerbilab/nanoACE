@@ -10,6 +10,93 @@ Transformer Probabilistic Models* (ICLR 2026) — "the paper" below.
 
 ---
 
+## 2026-06-11 (latest) — Concat-read variant; retained run is concat / K=64 / unfrozen
+
+- **Why a second target read.** The separate zero-init gated read (initial
+  implementation below) bought bitwise warm starts at real architectural cost:
+  a fourth attention op per layer, the prefix-0 gate hack (which exists only
+  because the buffer read has its own softmax with nothing else in it),
+  additive context+buffer contributions that cannot renormalize against each
+  other, and a target read inconsistent with the `sample_ar` append semantics
+  the buffer is meant to accelerate. `--concat-read` adds the paper's own
+  decoder (its appendix A.1): ONE softmax over the concatenated
+  `[context, visible buffer prefix]` keys through the base
+  `cross_attn`/`kv_ln` — buffer tokens enter the target read literally as
+  "more context". One fewer attention op; the v=0 gate machinery disappears
+  (the softmax always has context keys to fall back on).
+- **The soft gate (`buf_bias`).** One learned scalar per head per layer, added
+  to the buffer keys' pre-softmax logits via a float `attn_mask` (float masks
+  add to logits; bool masks block). Bias 0 is the paper's read; negative
+  values damp each visible buffer key's weight by `exp(bias)`. Default init −5
+  (`--buf-bias-init`). Gradient reaches the bias through the mask (verified),
+  at a rate proportional to the buffer's current attention mass.
+- **Finding: a logit bias cannot close a sharp pretrained attention.** Step-0
+  drift vs the base checkpoint is ~2.7 at bias 0, ~2.6 at −5, and still ~0.27
+  at −40: the pretrained GP attention logits span ~±30 (sharply peaked on
+  x-proximity), so a buffer key near the query's x out-competes distant
+  context keys by more than any trainable bias. Exact warm starts are
+  impossible in this read *by design*; `check_step0` still asserts the plain
+  forward bit-exactly and reports the buffered drift instead of asserting it.
+- **Reframe: that is a feature here.** At init the concat read treats buffer
+  tokens as appended context (buffer stream = context-stream copies, read =
+  base projections) — approximately the teacher-forced `sample_ar`
+  conditional — so the model *starts* near slow-AR behavior on buffered
+  targets instead of having to learn buffer use from a closed gate. Measured:
+  a 20-step smoke already scored buffered ≈ slow-AR (+0.53 vs +0.54), and the
+  20k run's first logged loss was −0.83 vs the −0.47 base context-only NLL.
+- **20k validation (K=64, `--no-freeze-base`, bias −5).** Joint log-density
+  per point (16 held-out functions, 4 ctx, 4 shared orders): diagonal −0.345
+  < buffered **+1.554** < slow-AR +1.650 — **~95% of the AR gap recovered**,
+  vs 76% for the frozen separate read at the same budget. Caveat: that
+  comparison changes two things at once (architecture AND unfreezing); no
+  separate-read-unfrozen arm was run. Joint training did not hurt the
+  marginals (fixed-case eval NLL 0.450 → 0.363; the paper's 50/50
+  context-only curriculum auto-restores under `--no-freeze-base`). Slow-AR
+  itself rose (+1.33 → +1.65): joint training also improved the base's
+  append-mode behavior, so the 95% is against a stronger baseline.
+- **K sweep (frozen separate read, 20k each; for the record).** Gap recovered:
+  K=32 ~63% < K=64 ~76% < K=128 ~87%, each scored on its own chain length.
+  Training wall-clock is K-insensitive at nano scale (launch-bound): ~35 min
+  per 20k at K=64 vs ~40 min at K=128, so K is a quality/rendering dial, not
+  a cost dial. K=64 chosen for the retained run.
+- **Retained run (completed 2026-06-12 ~06:30; supersedes the K=128 plan
+  below):** fresh 200k, concat read, K=64 defaults, joint training:
+
+      python extensions/arbuffer/gp1d_arbuffer.py --steps 200000 \
+          --concat-read --no-freeze-base \
+          --save-checkpoint artifacts/gp1d_arbuffer.pt --ckpt-every 5000
+
+  **Results:** joint log-density per point (16 held-out functions, 4 ctx, 4
+  shared orders): diagonal −0.364 < buffered **+1.648** < slow-AR +1.716 —
+  **~97% of the AR gap** (20k validation: ~95%), with slow-AR itself again
+  improved by the joint training (+1.650 → +1.716). Fixed-case predictive
+  eval NLL 0.363 / RMSE 0.471 (base 0.450 / 0.479); `log_lengthscale`
+  marginal moved *toward* the oracle, but the fixed case's `log_outputscale`
+  marginal drifted away (mean −0.882 vs oracle −0.523, base −0.424) — a
+  single-case readout, noted, not investigated. Base-parity drift 2.58.
+  Sampling 1.1× vs `sample_ar` (launch-bound, as always).
+
+  Under `--no-freeze-base` the artifact's empty-buffer marginals are *not*
+  bit-equal to the base checkpoint (`base parity` prints the drift instead),
+  so the oracle diagnostics describe the fine-tuned marginals, not the source
+  checkpoint's.
+- **Playground coupling (resolved same day).** The TS port (entry below) was
+  switched to the concat read: `buffered.ts` now implements ONE softmax over
+  `[context, buffer]` keys with the per-head `buf_bias` soft gate, and rejects
+  separate-read blobs with a clear error — the fixtures can only honestly cover
+  the shipped architecture. Fixtures regenerated from
+  `gp1d_arbuffer_concat20k.pt`; `parity.py`'s packed replication mirrors both
+  `forward_buffered` branches and records the read mode in the fixture. The
+  retained 200k swap is back to "repoint `ARBUF_CKPT`, re-run export + parity
+  together" — done 2026-06-12 once the run completed: the playground tab now
+  serves the retained `gp1d_arbuffer.pt` weights (still local-only).
+- **Bugfix:** `plot_demo` lacked `@torch.no_grad()`; with an unfrozen model
+  its forward outputs require grad and matplotlib's implicit `.numpy()`
+  raised. Latent since the initial implementation (frozen-base outputs don't
+  require grad) — first triggered by the first unfrozen run to reach the plot.
+
+---
+
 ## 2026-06-11 — Playground tab (TS port of the incremental sampler)
 
 Plan + verification log: `docs/plans/PLAN-arbuffer-playground.md`. The playground
@@ -17,10 +104,11 @@ Plan + verification log: `docs/plans/PLAN-arbuffer-playground.md`. The playgroun
 in the browser: context encoded once, a few coherent joint draws decoded
 against the cache (animated), with the diagonal band and independent marginal
 samples always shown for contrast. **Local-only for now** — the temporary
-20k K=128 checkpoint is exported locally, not deployed; the retained run swaps
-in by repointing `parity.py`'s `ARBUF_CKPT` (and the README export example) at
-the retained artifact, then re-running `export_weights.py` + `parity.py`
-together.
+checkpoint (originally the 20k K=128 separate-read run; since the concat-read
+switch in the entry above, `gp1d_arbuffer_concat20k.pt`) is exported locally,
+not deployed; the retained run swaps in by repointing `parity.py`'s
+`ARBUF_CKPT` (and the README export example) at the retained artifact, then
+re-running `export_weights.py` + `parity.py` together.
 
 - **Exporter contract.** This extension now exposes the same 2-arg
   `load_checkpoint(path, device)` wrapper every example has (in
@@ -35,6 +123,10 @@ together.
 - **One recorded TS deviation: projected K/V are cached**, not LayerNorm'd
   hidden states. `sample_joint`'s reproject-per-read style is a micro-opt under
   torch but O(K²·d²) in scalar JS. Same math; verified by the fixtures above.
+
+---
+
+## 2026-06-11 — Initial implementation (warm-started buffer on GP-1D)
 
 - **Three token streams per layer; the base invariants survive.** The buffer is
   a third token set carrying realized `(x, y)` values — *not* causal attention
@@ -158,7 +250,9 @@ together.
   Random order is the default and should stay so; order-averaged density
   evaluation (`joint_log_prob`) already mitigates the same effect.
 
-- **Retained artifact — still to run (as of 2026-06-11).** The fine-tune
+- **Retained artifact — superseded the same day (see the concat-read entry at
+  the top: the retained run is 200k at K=64, `--concat-read --no-freeze-base`).
+  Kept for the record.** The fine-tune
   default is 20k steps (the "recipe works" budget). Two 20k validation runs
   exist: K=64 (defaults) and K=128 (`--buffer-size 128 --n-points 192
   --sample-points 128`); K=128 won on joint density (~87% vs ~76% of the

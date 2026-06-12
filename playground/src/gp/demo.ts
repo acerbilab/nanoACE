@@ -8,11 +8,37 @@
  */
 
 import { GP, KERNEL_LABELS } from "../config";
+import { aceFooter, addInfoButton } from "../explain";
 import { clamp, hitPoint, pointOodReasons } from "../interaction";
 import { makePlot, type Plot } from "../plot";
 import { ACEModel } from "../ace/model";
 import { loadWeights } from "../ace/weights";
 import { gpInfer, type GPResult, type GPSpec } from "./infer";
+
+const EXPLAINER = {
+  title: "About: GP-1D regression",
+  html: `
+    <h3>The task</h3>
+    <p>You have a few noisy observations of an unknown 1-D function. Three questions arise:
+    what does the function look like elsewhere, how smooth or rough is it, and which kernel
+    family (RBF, Matérn-½, Matérn-3/2, periodic) best describes it? In Gaussian-process (GP) terms
+    these are the posterior predictive, the hyperparameter posterior, and a model-selection
+    question.</p>
+    <h3>What ACE is doing</h3>
+    <p>One transformer was trained on many synthetic functions drawn from all four kernels with
+    random hyperparameters. Your points enter as data tokens; the kernel and its hyperparameters
+    are latent tokens. Each edit triggers a single forward pass that returns the predictive band,
+    the kernel posterior, and the hyperparameter marginals — all from the same conditioning.
+    Pinning a latent moves it into the conditioning set, so predictions then treat it as known.</p>
+    <h3>Compared with the classical approach</h3>
+    <p>Classically you would fit a GP to each dataset: optimize or integrate the hyperparameters
+    (marginal-likelihood ascent, quadrature, MCMC) and compare kernels by marginal likelihood — a
+    separate computation every time the data changes. ACE amortizes that work into training, so
+    runtime inference is one forward pass; that is what makes this page interactive. The
+    trade-off: the answers are approximate, and reliable only within the distribution the network
+    was trained on (the page warns when you leave it).</p>
+    ${aceFooter()}`,
+};
 
 interface Point {
   x: number;
@@ -117,6 +143,7 @@ export async function mountGP(el: HTMLElement): Promise<void> {
     </div>
   `;
   el.appendChild(root);
+  addInfoButton(root.querySelector<HTMLElement>(".gp-hint")!, EXPLAINER);
 
   const mainCanvas = root.querySelector<HTMLCanvasElement>(".gp-main")!;
   const kernelCanvas = root.querySelector<HTMLCanvasElement>(".gp-kernel")!;
@@ -167,15 +194,19 @@ export async function mountGP(el: HTMLElement): Promise<void> {
     pin.scale = pinScale.checked;
     render();
   });
-  root.querySelector<HTMLButtonElement>(".reset")!.addEventListener("click", () => {
-    points.length = 0;
-    points.push(...defaultPoints.map((p) => ({ ...p })));
-    render();
-  });
-  root.querySelector<HTMLButtonElement>(".clear")!.addEventListener("click", () => {
-    points.length = 0;
-    render();
-  });
+  root
+    .querySelector<HTMLButtonElement>(".reset")!
+    .addEventListener("click", () => {
+      points.length = 0;
+      points.push(...defaultPoints.map((p) => ({ ...p })));
+      render();
+    });
+  root
+    .querySelector<HTMLButtonElement>(".clear")!
+    .addEventListener("click", () => {
+      points.length = 0;
+      render();
+    });
 
   // pointer interaction
   let mainPlot: Plot | null = null;
@@ -255,7 +286,9 @@ export async function mountGP(el: HTMLElement): Promise<void> {
   function render(): void {
     updateControls();
     const reasons = oodReasons();
-    const warning = reasons.length ? `Out of training distribution: ${reasons.join(" / ")}` : "";
+    const warning = reasons.length
+      ? `Out of training distribution: ${reasons.join(" / ")}`
+      : "";
 
     const spec: GPSpec = {
       points,
@@ -392,8 +425,12 @@ export async function mountGP(el: HTMLElement): Promise<void> {
     if (res.scalePost)
       p.line(res.scaleGrid, peak(res.scalePost), "#ea580c", 1.8);
     else p.vline(scaleVal, "#ea580c", 3);
-    p.label(pin.ell ? "lengthscale (pinned)" : "lengthscale", 50, 16, { fill: "#2563eb" });
-    p.label(pin.scale ? "outputscale (pinned)" : "outputscale", 50, 30, { fill: "#ea580c" });
+    p.label(pin.ell ? "lengthscale (pinned)" : "lengthscale", 50, 16, {
+      fill: "#2563eb",
+    });
+    p.label(pin.scale ? "outputscale (pinned)" : "outputscale", 50, 30, {
+      fill: "#ea580c",
+    });
   }
 
   render();

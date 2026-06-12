@@ -7,6 +7,7 @@
  */
 
 import { SIR } from "../config";
+import { aceFooter, addInfoButton } from "../explain";
 import { makePlot, type Plot } from "../plot";
 import { ACEModel } from "../ace/model";
 import { loadWeights } from "../ace/weights";
@@ -14,6 +15,36 @@ import { linspace, normalize } from "../util";
 import { betaLogPriorOnGrid } from "../gaussian/oracle";
 import { defaultSIRGrids, sirInfer, type SIRObservation } from "./infer";
 import { buildSirOracleCache, integrateSirAtTimes, sirOracle } from "./oracle";
+
+const EXPLAINER = {
+  title: "About: SIR simulation-based inference",
+  html: `
+    <h3>The task</h3>
+    <p>An epidemic's infected fraction is observed at a few time points, with noise. We aim to 
+    infer the contact rate β and recovery rate γ of the underlying
+    <a href="https://en.wikipedia.org/wiki/Compartmental_models_in_epidemiology#The_SIR_model">SIR model</a>,
+    and forecast the
+    epidemic curve. This is simulation-based inference (SBI): the model is easy to simulate 
+    forward, but in general its <em>likelihood</em> (the probability of the observations) cannot
+    be directly evaluated.</p>
+    <h3>What ACE is doing</h3>
+    <p>The network was trained purely on simulator output — rate pairs (β, γ) drawn from random
+    priors and the noisy curves they generate — and never sees a likelihood. Observations enter
+    as time-indexed data tokens, β and γ as latent tokens, and the runtime priors as prior
+    tokens. One forward pass returns p(β | data, prior), p(γ | data, prior), and the predictive
+    epidemic curve. This demo's SIR is deliberately simple (a deterministic ODE plus Gaussian
+    noise), so an exact reference posterior <em>is</em> computable by brute force on a grid —
+    the green curves. Real simulators rarely allow this; the reference is here so you can judge
+    the amortized answer.</p>
+    <h3>Compared with the classical approach</h3>
+    <p>Classical SBI methods (ABC, neural posterior estimation) typically spend a substantial
+    simulation budget per problem, and many fix the prior during training, so revised priors
+    mean a new round of simulation and fitting. ACE amortizes across datasets and priors at
+    once: any observation set and any Beta prior in the trained family yields a posterior in a
+    single forward pass. With sparse early observations the data constrain β and γ only jointly
+    (a ridge); watch an informative prior visibly tighten both marginals.</p>
+    ${aceFooter()}`,
+};
 
 const CSS = `
 .sir-root { display: flex; flex-direction: column; gap: 12px; }
@@ -61,7 +92,9 @@ function clampBetaUnit(x: number): number {
 
 export async function mountSIR(el: HTMLElement): Promise<void> {
   injectCss();
-  const weights = await loadWeights(`${import.meta.env.BASE_URL}models/sbi_sir`);
+  const weights = await loadWeights(
+    `${import.meta.env.BASE_URL}models/sbi_sir`,
+  );
   const model = new ACEModel(weights);
 
   const betaMeta = model.variables[1];
@@ -75,11 +108,12 @@ export async function mountSIR(el: HTMLElement): Promise<void> {
   function resetObservations(): void {
     observations.length = 0;
     const ys = integrateSirAtTimes(DEFAULT_BETA, DEFAULT_GAMMA, DEFAULT_TIMES);
-    for (let i = 0; i < DEFAULT_TIMES.length; i++) observations.push({ t: DEFAULT_TIMES[i], y: ys[i] });
+    for (let i = 0; i < DEFAULT_TIMES.length; i++)
+      observations.push({ t: DEFAULT_TIMES[i], y: ys[i] });
   }
   resetObservations();
 
-  let betaMean = betaRange[0] + 0.60 * (betaRange[1] - betaRange[0]);
+  let betaMean = betaRange[0] + 0.6 * (betaRange[1] - betaRange[0]);
   let gammaMean = gammaRange[0] + 0.45 * (gammaRange[1] - gammaRange[0]);
   let betaNu = 12;
   let gammaNu = 10;
@@ -124,6 +158,7 @@ export async function mountSIR(el: HTMLElement): Promise<void> {
     </div>
   `;
   el.appendChild(root);
+  addInfoButton(root.querySelector<HTMLElement>(".sir-hint")!, EXPLAINER);
 
   const mainCanvas = root.querySelector<HTMLCanvasElement>(".sir-main")!;
   const betaCanvas = root.querySelector<HTMLCanvasElement>(".sir-beta")!;
@@ -137,7 +172,12 @@ export async function mountSIR(el: HTMLElement): Promise<void> {
   const gammaMeanV = root.querySelector<HTMLSpanElement>(".gamma-mean-v")!;
   const gammaNuV = root.querySelector<HTMLSpanElement>(".gamma-nu-v")!;
 
-  const setupRange = (s: HTMLInputElement, lo: number, hi: number, val: number) => {
+  const setupRange = (
+    s: HTMLInputElement,
+    lo: number,
+    hi: number,
+    val: number,
+  ) => {
     s.min = String(lo);
     s.max = String(hi);
     s.step = String((hi - lo) / 240);
@@ -164,25 +204,31 @@ export async function mountSIR(el: HTMLElement): Promise<void> {
     gammaNu = Math.exp(parseFloat(gammaNuS.value));
     render();
   });
-  root.querySelector<HTMLButtonElement>(".reset")!.addEventListener("click", () => {
-    resetObservations();
-    render();
-  });
-  root.querySelector<HTMLButtonElement>(".clear")!.addEventListener("click", () => {
-    observations.length = 0;
-    render();
-  });
-  root.querySelector<HTMLButtonElement>(".uniform")!.addEventListener("click", () => {
-    betaMean = 0.5 * (betaRange[0] + betaRange[1]);
-    gammaMean = 0.5 * (gammaRange[0] + gammaRange[1]);
-    betaNu = 2;
-    gammaNu = 2;
-    betaMeanS.value = String(betaMean);
-    gammaMeanS.value = String(gammaMean);
-    betaNuS.value = String(Math.log(betaNu));
-    gammaNuS.value = String(Math.log(gammaNu));
-    render();
-  });
+  root
+    .querySelector<HTMLButtonElement>(".reset")!
+    .addEventListener("click", () => {
+      resetObservations();
+      render();
+    });
+  root
+    .querySelector<HTMLButtonElement>(".clear")!
+    .addEventListener("click", () => {
+      observations.length = 0;
+      render();
+    });
+  root
+    .querySelector<HTMLButtonElement>(".uniform")!
+    .addEventListener("click", () => {
+      betaMean = 0.5 * (betaRange[0] + betaRange[1]);
+      gammaMean = 0.5 * (gammaRange[0] + gammaRange[1]);
+      betaNu = 2;
+      gammaNu = 2;
+      betaMeanS.value = String(betaMean);
+      gammaMeanS.value = String(gammaMean);
+      betaNuS.value = String(Math.log(betaNu));
+      gammaNuS.value = String(Math.log(gammaNu));
+      render();
+    });
 
   let mainPlot: Plot | null = null;
   const hitObs = (px: number, py: number): number | null => {
@@ -211,12 +257,18 @@ export async function mountSIR(el: HTMLElement): Promise<void> {
       mainCanvas.setPointerCapture(e.pointerId);
       return;
     }
-    observations.push({ t: clampT(mainPlot.pxToX(e.offsetX)), y: clampY(mainPlot.pxToY(e.offsetY)) });
+    observations.push({
+      t: clampT(mainPlot.pxToX(e.offsetX)),
+      y: clampY(mainPlot.pxToY(e.offsetY)),
+    });
     render();
   });
   mainCanvas.addEventListener("pointermove", (e) => {
     if (dragIdx === null || !mainPlot) return;
-    observations[dragIdx] = { t: clampT(mainPlot.pxToX(e.offsetX)), y: clampY(mainPlot.pxToY(e.offsetY)) };
+    observations[dragIdx] = {
+      t: clampT(mainPlot.pxToX(e.offsetX)),
+      y: clampY(mainPlot.pxToY(e.offsetY)),
+    };
     render();
   });
   const endDrag = () => {
@@ -235,35 +287,91 @@ export async function mountSIR(el: HTMLElement): Promise<void> {
 
   function render(): void {
     updateControls();
-    const betaUnit = clampBetaUnit((betaMean - betaRange[0]) / (betaRange[1] - betaRange[0]));
-    const gammaUnit = clampBetaUnit((gammaMean - gammaRange[0]) / (gammaRange[1] - gammaRange[0]));
+    const betaUnit = clampBetaUnit(
+      (betaMean - betaRange[0]) / (betaRange[1] - betaRange[0]),
+    );
+    const gammaUnit = clampBetaUnit(
+      (gammaMean - gammaRange[0]) / (gammaRange[1] - gammaRange[0]),
+    );
     const params = { observations, betaUnit, betaNu, gammaUnit, gammaNu };
 
     const reasons: string[] = [];
-    const nFar = observations.filter((p) => p.y < SIR.Y_OOD[0] || p.y > SIR.Y_OOD[1]).length;
-    if (nFar > 0) reasons.push(`${nFar} observation(s) beyond training infected-fraction range`);
+    const nFar = observations.filter(
+      (p) => p.y < SIR.Y_OOD[0] || p.y > SIR.Y_OOD[1],
+    ).length;
+    if (nFar > 0)
+      reasons.push(
+        `${nFar} observation(s) beyond training infected-fraction range`,
+      );
     if (observations.length > SIR.MAX_CONTEXT_HINT)
-      reasons.push(`${observations.length} observations (training used <= ${SIR.MAX_CONTEXT_HINT})`);
+      reasons.push(
+        `${observations.length} observations (training used <= ${SIR.MAX_CONTEXT_HINT})`,
+      );
     if (observations.length > 0 && observations.length < SIR.MIN_CONTEXT_HINT)
-      reasons.push(`${observations.length} observations (training used at least ${SIR.MIN_CONTEXT_HINT})`);
-    const warning = reasons.length ? `Out of training distribution: ${reasons.join(" / ")}` : "";
+      reasons.push(
+        `${observations.length} observations (training used at least ${SIR.MIN_CONTEXT_HINT})`,
+      );
+    const warning = reasons.length
+      ? `Out of training distribution: ${reasons.join(" / ")}`
+      : "";
 
     const ace = sirInfer(model, params, grids);
-    const oracle = sirOracle(params, grids, oracleCache, { betaRange, gammaRange, sigmaObs: SIR.SIGMA_OBS });
-    const betaPrior = normalize(betaLogPriorOnGrid(grids.betaGrid, betaUnit, betaNu, betaRange[0], betaRange[1]));
+    const oracle = sirOracle(params, grids, oracleCache, {
+      betaRange,
+      gammaRange,
+      sigmaObs: SIR.SIGMA_OBS,
+    });
+    const betaPrior = normalize(
+      betaLogPriorOnGrid(
+        grids.betaGrid,
+        betaUnit,
+        betaNu,
+        betaRange[0],
+        betaRange[1],
+      ),
+    );
     const gammaPrior = normalize(
-      betaLogPriorOnGrid(grids.gammaGrid, gammaUnit, gammaNu, gammaRange[0], gammaRange[1]),
+      betaLogPriorOnGrid(
+        grids.gammaGrid,
+        gammaUnit,
+        gammaNu,
+        gammaRange[0],
+        gammaRange[1],
+      ),
     );
 
     drawMain(ace.predMean, ace.predStd, oracle.yMean, oracle.yStd, warning);
-    drawMarginal(betaCanvas, betaRange, grids.betaGrid, oracle.betaPost, ace.betaPost, betaPrior);
-    drawMarginal(gammaCanvas, gammaRange, grids.gammaGrid, oracle.gammaPost, ace.gammaPost, gammaPrior);
+    drawMarginal(
+      betaCanvas,
+      betaRange,
+      grids.betaGrid,
+      oracle.betaPost,
+      ace.betaPost,
+      betaPrior,
+    );
+    drawMarginal(
+      gammaCanvas,
+      gammaRange,
+      grids.gammaGrid,
+      oracle.gammaPost,
+      ace.gammaPost,
+      gammaPrior,
+    );
   }
 
   function baseMain(): Plot {
-    const p = makePlot(mainCanvas, { xDomain: SIR.T_DOMAIN, yDomain: SIR.Y_VIEW });
+    const p = makePlot(mainCanvas, {
+      xDomain: SIR.T_DOMAIN,
+      yDomain: SIR.Y_VIEW,
+    });
     p.clear();
-    p.rectData(SIR.T_DOMAIN[0], SIR.T_DOMAIN[1], SIR.Y_NORMAL[0], SIR.Y_NORMAL[1], "rgba(37,99,235,0.05)");
+    p.rectData(
+      SIR.T_DOMAIN[0],
+      SIR.T_DOMAIN[1],
+      SIR.Y_NORMAL[0],
+      SIR.Y_NORMAL[1],
+      "rgba(37,99,235,0.05)",
+    );
     p.hline(0, "#eceef2", 1);
     return p;
   }

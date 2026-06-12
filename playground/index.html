@@ -153,6 +153,11 @@
         margin: 10px 0 0;
         color: #374151;
       }
+      .ace-modal .explain-footer {
+        margin-top: 16px;
+        font-size: 12px;
+        color: var(--muted);
+      }
       .ace-modal-close {
         appearance: none;
         border: 1px solid var(--line);
@@ -236,15 +241,7 @@
           probabilistic model. It is trained on many simulated problem instances
           so that, at runtime, one forward pass can return probabilistic
           predictions of interest instead of solving a new inference problem
-          from scratch. ACE was developed by the
-          <a
-            href="https://www.helsinki.fi/en/researchgroups/machine-and-human-intelligence"
-            >Machine and Human Intelligence research group</a
-          >
-          at the University of Helsinki and collaborators; see the
-          <a href="https://acerbilab.github.io/amortized-conditioning-engine/"
-            >ACE project page</a
-          >.
+          from scratch.
         </p>
         <p>
           It sits in the same broad family as Prior-Fitted Networks (PFNs) and
@@ -265,6 +262,17 @@
           using compact pretrained networks that run in your browser. These
           browser models are intentionally small, so expect some imperfections;
           larger deployed ACE models perform better.
+        </p>
+        <p class="explain-footer">
+          ACE was developed by the
+          <a
+            href="https://www.helsinki.fi/en/researchgroups/machine-and-human-intelligence"
+            >Machine and Human Intelligence research group</a
+          >
+          at the University of Helsinki and collaborators —
+          <a href="https://acerbilab.github.io/amortized-conditioning-engine/"
+            >ACE project page</a
+          >.
         </p>
       </div>
     </div>

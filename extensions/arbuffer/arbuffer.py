@@ -30,6 +30,18 @@ away (zeroed buffer keys still contribute `exp(0) = 1` per key). A separate
 residual term is exactly zero at init, so a warm-started `BufferedACE` is
 bit-identical to its base checkpoint until fine-tuning moves the new weights.
 
+`concat_read=True` selects the paper-faithful alternative instead: the target
+read is ONE softmax through the base `cross_attn` over the concatenated
+`[context, visible buffer prefix]` keys — `sample_ar`'s append-to-context
+semantics — with a learned per-head logit bias on the buffer keys as a soft
+gate (an additive float attention mask). Bias 0 is the paper's from-scratch
+read (full dilution at warm start); very negative (default -8) damps each
+buffer key's softmax share by `exp(bias)`, so the warm start is *near*-base
+(drift is reported, not asserted) while the bias still receives gradient
+proportional to the buffer's attention mass. This mode needs no prefix-0 gate
+(the softmax always has context keys to fall back on) and one fewer attention
+op per layer, at the price of the exact step-0 parity guarantee.
+
 Other recorded deviations: no buffer positional embeddings (paper appendix H.2
 ablates them: no significant difference; dropping them removes the trained
 buffer-length cap), no buffer role embedding (the paper's appendix A.1 has one;
@@ -108,20 +120,30 @@ class BufferBlock(nn.Module):
 
         buf_ln1  <- ctx_ln1     buf_attn <- ctx_attn
         buf_ln2  <- ctx_ln2     buf_mlp  <- ctx_mlp
+
+    Separate-read mode adds the gated target->buffer read:
+
         tgt_buf_qln <- tgt_ln1  tgt_buf_kvln <- kv_ln
         tgt_buf_attn.out_proj <- zeros  (the warm-start gate)
+
+    Concat-read mode adds only `buf_bias` (one learned logit bias per head,
+    added to the buffer keys inside the base cross-attention's softmax); the
+    read itself reuses the base `cross_attn` / `kv_ln` / `tgt_ln1`.
     """
 
-    def __init__(self, cfg: ACEConfig):
+    def __init__(self, cfg: ACEConfig, *, concat_read: bool = False, buf_bias_init: float = -8.0):
         super().__init__()
         d = cfg.d_model
         self.buf_ln1 = nn.LayerNorm(d)
         self.buf_ln2 = nn.LayerNorm(d)
         self.buf_attn = nn.MultiheadAttention(d, cfg.n_heads, batch_first=True)
         self.buf_mlp = _mlp(d, cfg.mlp_hidden, d)
-        self.tgt_buf_qln = nn.LayerNorm(d)
-        self.tgt_buf_kvln = nn.LayerNorm(d)
-        self.tgt_buf_attn = nn.MultiheadAttention(d, cfg.n_heads, batch_first=True)
+        if concat_read:
+            self.buf_bias = nn.Parameter(torch.full((cfg.n_heads,), float(buf_bias_init)))
+        else:
+            self.tgt_buf_qln = nn.LayerNorm(d)
+            self.tgt_buf_kvln = nn.LayerNorm(d)
+            self.tgt_buf_attn = nn.MultiheadAttention(d, cfg.n_heads, batch_first=True)
 
 
 @dataclass
@@ -149,22 +171,39 @@ class BufferedACE(ACE):
     under `buf_blocks.*`, which is what makes the warm-start key guard exact.
     """
 
-    def __init__(self, variables: Sequence[Variable], cfg: ACEConfig | None = None):
+    def __init__(
+        self,
+        variables: Sequence[Variable],
+        cfg: ACEConfig | None = None,
+        *,
+        concat_read: bool = False,
+        buf_bias_init: float = -8.0,
+    ):
         super().__init__(variables, cfg)
-        self.buf_blocks = nn.ModuleList([BufferBlock(self.cfg) for _ in range(self.cfg.n_layers)])
+        self.concat_read = bool(concat_read)
+        self.buf_bias_init = float(buf_bias_init)
+        self.buf_blocks = nn.ModuleList(
+            [
+                BufferBlock(self.cfg, concat_read=self.concat_read, buf_bias_init=self.buf_bias_init)
+                for _ in range(self.cfg.n_layers)
+            ]
+        )
 
     def init_from_base(self) -> None:
-        """Copy base weights into the buffer stream and zero the target gate."""
+        """Copy base weights into the buffer stream and (re)set the target gate."""
 
         for blk, bblk in zip(self.blocks, self.buf_blocks):
             bblk.buf_ln1.load_state_dict(blk.ctx_ln1.state_dict())
             bblk.buf_ln2.load_state_dict(blk.ctx_ln2.state_dict())
             bblk.buf_attn.load_state_dict(blk.ctx_attn.state_dict())
             bblk.buf_mlp.load_state_dict(blk.ctx_mlp.state_dict())
-            bblk.tgt_buf_qln.load_state_dict(blk.tgt_ln1.state_dict())
-            bblk.tgt_buf_kvln.load_state_dict(blk.kv_ln.state_dict())
-            nn.init.zeros_(bblk.tgt_buf_attn.out_proj.weight)
-            nn.init.zeros_(bblk.tgt_buf_attn.out_proj.bias)
+            if self.concat_read:
+                nn.init.constant_(bblk.buf_bias, self.buf_bias_init)
+            else:
+                bblk.tgt_buf_qln.load_state_dict(blk.tgt_ln1.state_dict())
+                bblk.tgt_buf_kvln.load_state_dict(blk.kv_ln.state_dict())
+                nn.init.zeros_(bblk.tgt_buf_attn.out_proj.weight)
+                nn.init.zeros_(bblk.tgt_buf_attn.out_proj.bias)
 
     def freeze_base(self) -> None:
         """Freeze everything except the buffer stream (`buf_blocks.*`)."""
@@ -222,15 +261,24 @@ class BufferedACE(ACE):
         causal = torch.zeros(k, n + k, dtype=torch.bool, device=device)
         causal[:, n:] = ar[None, :] > ar[:, None]
 
-        # Target->buffer prefix mask [B*heads, M, K]: target m reads buffer
-        # 1..prefix_len[b, m]. Prefix-0 targets formally read slot 0 but their
-        # buffer-read output is multiplied by 0 below — explicit semantics
-        # rather than relying on fully-masked-row behavior.
+        heads = self.cfg.n_heads
         blocked = ar[None, None, :] >= prefix[:, :, None]  # [B, M, K]
-        zero_prefix = prefix == 0
-        blocked[..., 0] = blocked[..., 0] & ~zero_prefix
-        prefix_mask = blocked.repeat_interleave(self.cfg.n_heads, dim=0)
-        gate = (~zero_prefix).to(tgt.dtype).unsqueeze(-1)  # [B, M, 1]
+        if self.concat_read:
+            # One softmax over [context, buffer]: a float mask carries -inf for
+            # padded context and non-visible buffer keys; the learned per-head
+            # logit bias is added to visible buffer keys per layer below.
+            # Prefix-0 rows need no gate — the softmax always has context keys.
+            blocked_all = torch.cat([kp_ctx[:, None, :].expand(b, m, n), blocked], dim=2)
+            blocked_all = blocked_all[:, None].expand(b, heads, m, n + k)
+        else:
+            # Target->buffer prefix mask [B*heads, M, K]: target m reads buffer
+            # 1..prefix_len[b, m]. Prefix-0 targets formally read slot 0 but their
+            # buffer-read output is multiplied by 0 below — explicit semantics
+            # rather than relying on fully-masked-row behavior.
+            zero_prefix = prefix == 0
+            blocked[..., 0] = blocked[..., 0] & ~zero_prefix
+            prefix_mask = blocked.repeat_interleave(heads, dim=0)
+            gate = (~zero_prefix).to(tgt.dtype).unsqueeze(-1)  # [B, M, 1]
 
         for blk, bblk in zip(self.blocks, self.buf_blocks):
             ctx_in = ctx
@@ -247,16 +295,27 @@ class BufferedACE(ACE):
             )
             buf = buf + buf_att
             buf = buf + bblk.buf_mlp(bblk.buf_ln2(buf))
-            # 3. base target read of the updated context — frozen, as ACEBlock.
-            kv_c = blk.kv_ln(ctx)
-            tgt_att, _ = blk.cross_attn(blk.tgt_ln1(tgt), kv_c, kv_c, key_padding_mask=kp_ctx, need_weights=False)
-            tgt = tgt + tgt_att
-            # 4. NEW gated buffer read — exactly zero at warm start.
-            kv_b = bblk.tgt_buf_kvln(buf)
-            read, _ = bblk.tgt_buf_attn(
-                bblk.tgt_buf_qln(tgt), kv_b, kv_b, attn_mask=prefix_mask, need_weights=False
-            )
-            tgt = tgt + read * gate
+            if self.concat_read:
+                # 3+4 fused. ONE softmax over [updated context, buffer] through
+                # the base cross-attention (sample_ar's append semantics); the
+                # learned bias offsets the buffer keys' logits (soft gate).
+                kv = blk.kv_ln(torch.cat([ctx, buf], dim=1))
+                fmask = torch.zeros(b, heads, m, n + k, dtype=tgt.dtype, device=device)
+                fmask[..., n:] = bblk.buf_bias.view(1, heads, 1, 1)
+                fmask = fmask.masked_fill(blocked_all, float("-inf")).reshape(b * heads, m, n + k)
+                tgt_att, _ = blk.cross_attn(blk.tgt_ln1(tgt), kv, kv, attn_mask=fmask, need_weights=False)
+                tgt = tgt + tgt_att
+            else:
+                # 3. base target read of the updated context — frozen, as ACEBlock.
+                kv_c = blk.kv_ln(ctx)
+                tgt_att, _ = blk.cross_attn(blk.tgt_ln1(tgt), kv_c, kv_c, key_padding_mask=kp_ctx, need_weights=False)
+                tgt = tgt + tgt_att
+                # 4. NEW gated buffer read — exactly zero at warm start.
+                kv_b = bblk.tgt_buf_kvln(buf)
+                read, _ = bblk.tgt_buf_attn(
+                    bblk.tgt_buf_qln(tgt), kv_b, kv_b, attn_mask=prefix_mask, need_weights=False
+                )
+                tgt = tgt + read * gate
             # 5. base target MLP + 6. zero masked rows, as ACEBlock.
             tgt = tgt + blk.tgt_mlp(blk.tgt_ln2(tgt))
             ctx = ctx * ctx_mask.unsqueeze(-1)
@@ -299,19 +358,23 @@ def load_warm_start(
     variables: Sequence[Variable],
     *,
     check_batch: Batch | None = None,
+    concat_read: bool = False,
+    buf_bias_init: float = -8.0,
 ) -> BufferedACE:
     """Build a `BufferedACE` from a base ACE checkpoint.
 
     Loads with `strict=False` under a hard guard: the base checkpoint must
     account for every non-buffer parameter (`unexpected == []` and all missing
     keys under `buf_blocks.`), then `init_from_base` copies the buffer-stream
-    weights and zeroes the target gate. If `check_batch` is given, the step-0
-    self-check runs against a freshly loaded base `ACE` (see `check_step0`).
+    weights and sets the target gate (zeroed out_proj, or the concat-read
+    bias). If `check_batch` is given, the step-0 self-check runs against a
+    freshly loaded base `ACE` (see `check_step0`): bitwise assert for the
+    separate read, a reported drift for the soft-gated concat read.
     """
 
     payload = torch.load(path, map_location=device, weights_only=False)
     cfg = ACEConfig(**payload["cfg"])
-    model = BufferedACE(list(variables), cfg).to(device)
+    model = BufferedACE(list(variables), cfg, concat_read=concat_read, buf_bias_init=buf_bias_init).to(device)
     missing, unexpected = model.load_state_dict(payload["state_dict"], strict=False)
     if unexpected:
         raise RuntimeError(f"base checkpoint has keys BufferedACE lacks: {unexpected}")
@@ -322,17 +385,28 @@ def load_warm_start(
     if check_batch is not None:
         base = ACE(list(variables), cfg).to(device)
         base.load_state_dict(payload["state_dict"])
-        check_step0(model, base, check_batch)
-        print("arbuffer warm start: step-0 parity OK (plain forward and zero-gated buffered forward)")
+        drift = check_step0(model, base, check_batch)
+        if drift is None:
+            print("arbuffer warm start: step-0 parity OK (plain forward and zero-gated buffered forward)")
+        else:
+            print(
+                f"arbuffer warm start: plain forward bit-equal; concat read soft gate "
+                f"(bias init {model.buf_bias_init:+.1f}) -- step-0 buffered drift max |diff| {drift:.3e}"
+            )
     return model
 
 
 def load_buffered_checkpoint(path: str | Path, device: torch.device | str, variables: Sequence[Variable]) -> BufferedACE:
-    """Load a fine-tuned `BufferedACE` checkpoint (strict; no warm-start logic)."""
+    """Load a fine-tuned `BufferedACE` checkpoint (strict; no warm-start logic).
+
+    The read mode is inferred from the state dict (`buf_bias` keys mark the
+    concat read), so checkpoints from either variant load transparently.
+    """
 
     payload = torch.load(path, map_location=device, weights_only=False)
     cfg = ACEConfig(**payload["cfg"])
-    model = BufferedACE(list(variables), cfg).to(device)
+    concat = any(key.endswith(".buf_bias") for key in payload["state_dict"])
+    model = BufferedACE(list(variables), cfg, concat_read=concat).to(device)
     model.load_state_dict(payload["state_dict"])
     return model
 
@@ -358,12 +432,16 @@ def synthetic_buffer(model: ACE, batch: Batch, k: int = 8) -> Tokens:
 
 
 @torch.no_grad()
-def check_step0(model: BufferedACE, base: ACE, batch: Batch) -> None:
-    """Assert a warm-started model is bit-identical to its base checkpoint.
+def check_step0(model: BufferedACE, base: ACE, batch: Batch) -> float | None:
+    """Check a warm-started model against its base checkpoint.
 
-    (a) The inherited plain forward must equal the base forward exactly.
-    (b) `forward_buffered` with a non-empty synthetic buffer must equal the
-    context-only prediction exactly (the zero-init gate adds exact zeros).
+    (a) The inherited plain forward must equal the base forward exactly (it
+    never touches the buffer modules, so this holds in both read modes).
+    (b) Separate-read mode: `forward_buffered` with a non-empty synthetic
+    buffer must equal the context-only prediction exactly (the zero-init gate
+    adds exact zeros); returns None. Concat-read mode: the soft gate leaks
+    `exp(bias)` per visible buffer key, so exactness is impossible by design —
+    returns the measured max |drift| for the caller to report.
     """
 
     pred_base = base(batch)
@@ -378,10 +456,18 @@ def check_step0(model: BufferedACE, base: ACE, batch: Batch) -> None:
     k = buffer.shape[1]
     prefix = torch.randint(1, k + 1, (b, m), device=buffer.value.device)
     pred_buf = model.forward_buffered(BufferedBatch(batch.variables, batch.context, buffer, batch.target, prefix))
+    if model.concat_read:
+        return float(
+            torch.maximum(
+                (pred_buf.cont_raw - pred_base.cont_raw).abs().max(),
+                (pred_buf.disc_logits - pred_base.disc_logits).abs().max(),
+            )
+        )
     if not torch.equal(pred_buf.cont_raw, pred_base.cont_raw) or not torch.equal(
         pred_buf.disc_logits, pred_base.disc_logits
     ):
         raise RuntimeError("step-0 check failed: zero-gated buffered forward differs from context-only")
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -468,11 +554,14 @@ def sample_joint(
 
     cache = encode_context(model, context)
     b = n_draws
+    concat = model.concat_read
+    heads = model.cfg.n_heads
     # LayerNorm is per-token, so LN'd states can be cached once (context) or
     # appended incrementally (buffer) instead of being recomputed every step.
     ctx_in_ln = [bblk.buf_ln1(t).expand(b, -1, -1) for bblk, t in zip(model.buf_blocks, cache.inputs)]
     kv_c = [blk.kv_ln(t).expand(b, -1, -1) for blk, t in zip(model.blocks, cache.kv)]
     kp_ctx = (~cache.mask).expand(b, -1)
+    n_ctx_tok = cache.mask.shape[1]
 
     # Per-layer growing caches: LN'd layer-input states (buffer attention kv)
     # and post-update states already LN'd for the target read.
@@ -488,14 +577,29 @@ def sample_joint(
         query = _data_tokens(var_index, x_step, torch.zeros(b, 1, device=device), QUERY)
         tgt = model._embed(query)
         for layer, (blk, bblk) in enumerate(zip(model.blocks, model.buf_blocks)):
-            tgt_att, _ = blk.cross_attn(
-                blk.tgt_ln1(tgt), kv_c[layer], kv_c[layer], key_padding_mask=kp_ctx, need_weights=False
-            )
-            tgt = tgt + tgt_att
-            if step > 0:
-                kv_b = buf_kv[layer]
-                read, _ = bblk.tgt_buf_attn(bblk.tgt_buf_qln(tgt), kv_b, kv_b, need_weights=False)
-                tgt = tgt + read
+            if concat:
+                # One softmax over [context, realized buffer]; all current
+                # buffer tokens are visible (prefix = step), bias on their keys.
+                kv = torch.cat([kv_c[layer], buf_kv[layer]], dim=1)
+                s = kv.shape[1]
+                fmask = torch.zeros(b, heads, 1, s, dtype=tgt.dtype, device=device)
+                fmask[..., n_ctx_tok:] = bblk.buf_bias.view(1, heads, 1, 1)
+                fmask[..., :n_ctx_tok] = fmask[..., :n_ctx_tok].masked_fill(
+                    kp_ctx[:, None, None, :], float("-inf")
+                )
+                tgt_att, _ = blk.cross_attn(
+                    blk.tgt_ln1(tgt), kv, kv, attn_mask=fmask.reshape(b * heads, 1, s), need_weights=False
+                )
+                tgt = tgt + tgt_att
+            else:
+                tgt_att, _ = blk.cross_attn(
+                    blk.tgt_ln1(tgt), kv_c[layer], kv_c[layer], key_padding_mask=kp_ctx, need_weights=False
+                )
+                tgt = tgt + tgt_att
+                if step > 0:
+                    kv_b = buf_kv[layer]
+                    read, _ = bblk.tgt_buf_attn(bblk.tgt_buf_qln(tgt), kv_b, kv_b, need_weights=False)
+                    tgt = tgt + read
             tgt = tgt + blk.tgt_mlp(blk.tgt_ln2(tgt))
         pred = model._predictions(model.final_norm(tgt))
         if teacher_force is None:
@@ -512,14 +616,15 @@ def sample_joint(
         kp_step = torch.cat(
             [kp_ctx, torch.zeros(b, step + 1, dtype=torch.bool, device=device)], dim=1
         )
-        for layer, bblk in enumerate(model.buf_blocks):
+        for layer, (blk, bblk) in enumerate(zip(model.blocks, model.buf_blocks)):
             q = bblk.buf_ln1(bstate)  # the new token's LN'd layer input: query AND its kv slot
             buf_in_ln[layer] = torch.cat([buf_in_ln[layer], q], dim=1)
             kv = torch.cat([ctx_in_ln[layer], buf_in_ln[layer]], dim=1)
             att, _ = bblk.buf_attn(q, kv, kv, key_padding_mask=kp_step, need_weights=False)
             bstate = bstate + att
             bstate = bstate + bblk.buf_mlp(bblk.buf_ln2(bstate))
-            buf_kv[layer] = torch.cat([buf_kv[layer], bblk.tgt_buf_kvln(bstate)], dim=1)
+            read_ln = blk.kv_ln if concat else bblk.tgt_buf_kvln
+            buf_kv[layer] = torch.cat([buf_kv[layer], read_ln(bstate)], dim=1)
     return values, logps
 
 

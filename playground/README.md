@@ -28,9 +28,10 @@ Five demos:
   edit context points / pin latents like the GP tab, then watch a few
   **coherent joint function draws** decode autoregressively from one cached
   context encoding (animated), next to the diagonal band and independent
-  per-point marginal samples. **Local-only for now**: the weights are a
-  preliminary 20k fine-tune, exported locally and not deployed; the tab and
-  its tests self-skip/notice gracefully when the blob is absent.
+  per-point marginal samples. **Local-only for now**: the weights are the
+  retained 200k concat-read fine-tune (K=64, joint training), exported locally
+  and not yet deployed; the tab and its tests self-skip/notice gracefully when
+  the blob is absent.
 
 ## Run locally
 
@@ -46,8 +47,8 @@ python playground/export_weights.py --task gp1d     --checkpoint artifacts/gp1d.
 python playground/export_weights.py --task gaussian --checkpoint artifacts/gaussian_toy.pt --out playground/public/models/gaussian
 python playground/export_weights.py --task sbi_sir  --checkpoint artifacts/sbi_sir.pt      --out playground/public/models/sbi_sir
 python playground/export_weights.py --task bo1d     --checkpoint artifacts/bo1d.pt         --out playground/public/models/bo1d
-# local-only AR-buffer tab (extensions/arbuffer/ fine-tuned checkpoint)
-python playground/export_weights.py --task gp1d_arbuffer --checkpoint artifacts/gp1d_arbuffer_k128.pt --out playground/public/models/gp1d_arbuffer
+# local-only AR-buffer tab (extensions/arbuffer/ retained concat-read checkpoint)
+python playground/export_weights.py --task gp1d_arbuffer --checkpoint artifacts/gp1d_arbuffer.pt --out playground/public/models/gp1d_arbuffer
 
 cd playground
 npm install
@@ -73,13 +74,20 @@ npm test           # vitest: parity + orchestration + UI smoke tests
   posterior or SIR numerical grid oracle where applicable.
   BO lives in `src/bo/` and intentionally has no oracle.
 - `src/ace/buffered.ts` + `src/arbuf/` — the AR-buffer tab: a TS port of the
-  `extensions/arbuffer/` incremental sampler (`encode_context` + per-step decode,
-  with projected-KV caches instead of Python's reproject-per-read — same math,
-  same fixtures) on top of the untouched base port, plus the tab's DOM-free
-  `infer.ts` (context builder, static band pass, step-driveable `JointSampler`)
-  and `demo.ts`.
+  `extensions/arbuffer/` incremental sampler in its **concat-read** form
+  (`encode_context` + per-step decode; one softmax over `[context, buffer]`
+  keys with the learned per-head `buf_bias` soft gate; projected-KV caches
+  instead of Python's reproject-per-read — same math, same fixtures) on top of
+  the untouched base port, plus the tab's DOM-free `infer.ts` (context builder,
+  static band pass, step-driveable `JointSampler`) and `demo.ts`. Separate-read
+  checkpoints are rejected at load with a clear error.
 - `src/config.ts` — all tunable constants (OOD thresholds, view ranges, grid
   sizes) in one place.
+- `src/explain.ts` — the per-tab "?" explainer: each tab's hint line ends with a
+  button opening a short didactic modal (the task / what ACE is doing / how it
+  compares to the classical approach, plus paper attribution). Content lives in
+  each tab's `demo.ts`; the modal chrome is shared with the global "What is
+  ACE?" dialog.
 
 ### Out-of-distribution guardrails
 

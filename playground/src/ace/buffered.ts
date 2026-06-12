@@ -1,21 +1,29 @@
 /**
  * Causal AR-buffer inference in TypeScript — a port of `extensions/arbuffer/`'s
  * `BufferedACE` *incremental* path (`encode_context` + the per-step loop of
- * `sample_joint`). The inherited plain forward stays `ACEModel`'s, untouched, so
- * the diagonal band/marginals on a buffered checkpoint go through the
- * parity-tested base port.
+ * `sample_joint`) in its **concat-read** form: the target read is ONE softmax
+ * through the frozen base `cross_attn` over the concatenated
+ * `[context, realized buffer]` keys, with a learned per-head logit bias
+ * (`buf_blocks.*.buf_bias`) added to the buffer keys as a soft gate. With an
+ * empty buffer the read reduces exactly to the base cross-attention, so there
+ * is no step-0 special case. The inherited plain forward stays `ACEModel`'s,
+ * untouched. Separate-read checkpoints (the earlier `tgt_buf_attn` variant) are
+ * rejected at load with a clear error — the port follows the retained
+ * architecture only, and the parity fixtures cover exactly what ships.
  *
  * Two deliberate differences from the Python inference code, same math:
  * - **Projected K/V are cached**, not LayerNorm'd hidden states. Python recomputes
  *   KV projections per attention call ("a micro-opt at nano scale" under torch);
  *   in scalar JS that reprojection is O(K²·d²) over a chain. Caches: per layer,
- *   context K/V for the base cross-attention (over `kv_ln(ctx_out)`) and for the
- *   buffer attention (over `buf_ln1(ctx_in)`), built once per context; per draw,
- *   append-only buffer K/V for `buf_attn` and `tgt_buf_attn`.
+ *   context K/V for the target read (over `kv_ln(ctx_out)`) and for the buffer
+ *   stream (over `buf_ln1(ctx_in)`), built once per context; per draw,
+ *   append-only buffer K/V for `buf_attn` (over `buf_ln1` of each token's layer
+ *   input) and for the target read (over `kv_ln` of each token's updated state).
  * - **No masks.** Incremental decode is causal by construction (you only attend
- *   to what is already cached); step 0 skips the buffer read (the packed path's
- *   prefix-0 gate). The context must be dense and all-active — the demos always
- *   build dense token lists, so the padding path is asserted away, not handled.
+ *   to what is already cached), and the context must be dense and all-active —
+ *   the demos always build dense token lists, so the padding path is asserted
+ *   away, not handled. The per-head buffer bias is applied directly to the
+ *   buffer keys' attention logits instead of through a float attn_mask.
  */
 
 import { addInto, layerNorm, linear, logSoftmax, logSumExp, mlp, multiHeadAttention, softmax, softplus } from "./nn";
@@ -51,7 +59,12 @@ function projPart(vec: number[], W: Tensor, b: Tensor, part: 0 | 1 | 2): number[
   return out;
 }
 
-/** Single-query multi-head attention over already-projected K/V caches. */
+/**
+ * Single-query multi-head attention over already-projected K/V caches. Keys from
+ * index `biasFrom` onward get `bias[head]` added to their pre-softmax logits —
+ * the concat read's soft gate (equivalent to Python's float attn_mask carrying
+ * `buf_bias` on the buffer columns).
+ */
 function attendCached(
   q: number[],
   keys: number[][],
@@ -59,6 +72,8 @@ function attendCached(
   nHeads: number,
   outProjW: Tensor,
   outProjB: Tensor,
+  biasFrom: number = Number.POSITIVE_INFINITY,
+  bias: Tensor | null = null,
 ): number[] {
   const d = q.length;
   const headDim = d / nHeads;
@@ -67,11 +82,12 @@ function attendCached(
   const outVec = new Array<number>(d).fill(0);
   for (let h = 0; h < nHeads; h++) {
     const off = h * headDim;
+    const headBias = bias ? bias.data[h] : 0;
     const scores = new Array<number>(Tk);
     for (let j = 0; j < Tk; j++) {
       let dot = 0;
       for (let c = 0; c < headDim; c++) dot += q[off + c] * keys[j][off + c];
-      scores[j] = dot * scale;
+      scores[j] = dot * scale + (j >= biasFrom ? headBias : 0);
     }
     const attn = softmax(scores);
     for (let j = 0; j < Tk; j++) {
@@ -102,7 +118,7 @@ export interface CtxCache {
 interface DrawLayerCache {
   selfK: number[][]; // buf_attn K/V of buf_ln1(token layer input)
   selfV: number[][];
-  readK: number[][]; // tgt_buf_attn K/V of tgt_buf_kvln(token updated state)
+  readK: number[][]; // target-read K/V of kv_ln(token updated state) under cross_attn
   readV: number[][];
 }
 
@@ -123,6 +139,13 @@ export class BufferedACEModel extends ACEModel {
   constructor(weights: Weights) {
     super(weights);
     this.bw = weights;
+    const concat = weights.manifest.tensors.some((t) => t.name === "buf_blocks.0.buf_bias");
+    if (!concat) {
+      throw new Error(
+        "this blob was exported from a separate-read AR-buffer checkpoint; " +
+          "the TS port implements the concat-read architecture only — re-export a --concat-read checkpoint",
+      );
+    }
   }
 
   private bt(name: string): Tensor {
@@ -212,19 +235,20 @@ export class BufferedACEModel extends ACEModel {
       const L = cache.layers[i];
       const dl = draw.layers[i];
 
-      // Base cross-attention read of the cached context — frozen path.
+      // ONE softmax over [context, realized buffer] through the frozen base
+      // cross-attention; the per-head bias soft-gates the buffer keys. With an
+      // empty buffer this is exactly the base context read.
       const q = layerNorm(t, this.bt(p + "tgt_ln1.weight"), this.bt(p + "tgt_ln1.bias"));
       const qp = projPart(q, this.bt(p + "cross_attn.in_proj_weight"), this.bt(p + "cross_attn.in_proj_bias"), 0);
-      t = addInto(t, attendCached(qp, L.crossK, L.crossV, this.nHeads,
-        this.bt(p + "cross_attn.out_proj.weight"), this.bt(p + "cross_attn.out_proj.bias")));
-
-      // Gated buffer read; an empty buffer is skipped (the prefix-0 semantics).
-      if (draw.k > 0) {
-        const q2 = layerNorm(t, this.bt(bp + "tgt_buf_qln.weight"), this.bt(bp + "tgt_buf_qln.bias"));
-        const qp2 = projPart(q2, this.bt(bp + "tgt_buf_attn.in_proj_weight"), this.bt(bp + "tgt_buf_attn.in_proj_bias"), 0);
-        t = addInto(t, attendCached(qp2, dl.readK, dl.readV, this.nHeads,
-          this.bt(bp + "tgt_buf_attn.out_proj.weight"), this.bt(bp + "tgt_buf_attn.out_proj.bias")));
-      }
+      t = addInto(t, attendCached(
+        qp,
+        L.crossK.concat(dl.readK),
+        L.crossV.concat(dl.readV),
+        this.nHeads,
+        this.bt(p + "cross_attn.out_proj.weight"), this.bt(p + "cross_attn.out_proj.bias"),
+        L.crossK.length,
+        this.bt(bp + "buf_bias"),
+      ));
 
       t = addInto(t, mlp(
         layerNorm(t, this.bt(p + "tgt_ln2.weight"), this.bt(p + "tgt_ln2.bias")),
@@ -253,6 +277,7 @@ export class BufferedACEModel extends ACEModel {
     const perLayer: number[][] = [];
 
     for (let i = 0; i < this.nLayers; i++) {
+      const p = `blocks.${i}.`;
       const bp = `buf_blocks.${i}.`;
       const L = cache.layers[i];
       const dl = draw.layers[i];
@@ -273,11 +298,13 @@ export class BufferedACEModel extends ACEModel {
         this.bt(bp + "buf_mlp.2.weight"), this.bt(bp + "buf_mlp.2.bias"),
       ));
 
-      const kvr = layerNorm(h, this.bt(bp + "tgt_buf_kvln.weight"), this.bt(bp + "tgt_buf_kvln.bias"));
-      const readW = this.bt(bp + "tgt_buf_attn.in_proj_weight");
-      const readB = this.bt(bp + "tgt_buf_attn.in_proj_bias");
-      dl.readK.push(projPart(kvr, readW, readB, 1));
-      dl.readV.push(projPart(kvr, readW, readB, 2));
+      // Concat read: the target sees this token through the BASE kv_ln/cross_attn
+      // projections — buffer tokens enter the target read literally as more context.
+      const kvr = layerNorm(h, this.bt(p + "kv_ln.weight"), this.bt(p + "kv_ln.bias"));
+      const crossW = this.bt(p + "cross_attn.in_proj_weight");
+      const crossB = this.bt(p + "cross_attn.in_proj_bias");
+      dl.readK.push(projPart(kvr, crossW, crossB, 1));
+      dl.readV.push(projPart(kvr, crossW, crossB, 2));
       perLayer.push(h.slice());
     }
     draw.k += 1;

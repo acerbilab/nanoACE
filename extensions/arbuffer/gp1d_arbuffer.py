@@ -339,6 +339,7 @@ def base_parity(model: BufferedACE, args: argparse.Namespace, toy: gp1d.GPBatch,
         raise RuntimeError("base parity FAILED: frozen base no longer matches the base checkpoint")
 
 
+@torch.no_grad()
 def plot_demo(
     model: BufferedACE,
     demo: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
@@ -411,6 +412,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--buffer-size", type=int, default=64, help="buffer length K (training max = demo chain length)")
     p.add_argument("--n-points", type=int, default=128, help="GP points drawn per fine-tune instance")
     p.add_argument("--no-freeze-base", action="store_true", help="joint training (paper 50/50 curriculum) instead of frozen base")
+    p.add_argument(
+        "--concat-read",
+        action="store_true",
+        help="paper-style target read: ONE softmax over concatenated [context, buffer] keys through the "
+        "base cross-attention, with a learned per-head logit bias on buffer keys (soft gate), instead of "
+        "the separate zero-init buffer read; warm start is near-exact (drift reported), not bitwise",
+    )
+    p.add_argument(
+        "--buf-bias-init",
+        type=float,
+        default=-5.0,
+        help="initial buffer logit bias for --concat-read (0 = the paper's read, full warm-start dilution; "
+        "more negative = softer-closed warm start but slower gate opening)",
+    )
     p.add_argument("--draws", type=int, default=64, help="coherent draw streams in the timing measurement")
     p.add_argument("--plot-draws", type=int, default=8, help="coherent draws shown in the figure (distinct colors)")
     p.add_argument("--sample-points", type=int, default=64, help="demo sampling grid size (= eval chain length)")
@@ -442,7 +457,14 @@ def main() -> None:
     elif args.resume:
         model = load_buffered_checkpoint(args.resume, device, variables)
     else:
-        model = load_warm_start(args.base_checkpoint, device, variables, check_batch=toy.batch)
+        model = load_warm_start(
+            args.base_checkpoint,
+            device,
+            variables,
+            check_batch=toy.batch,
+            concat_read=args.concat_read,
+            buf_bias_init=args.buf_bias_init,
+        )
 
     if not args.no_freeze_base:
         model.freeze_base()
@@ -455,11 +477,18 @@ def main() -> None:
             torch.load(args.resume, map_location=device, weights_only=False) if args.resume else None
         )
         if resume_state is None:
-            print(
-                "note: with the zero-init gate the first logged loss IS the base model's "
-                "context-only NLL on the buffered targets; everything below it is "
-                "information extracted from the buffer."
-            )
+            if args.concat_read:
+                print(
+                    "note: the concat read starts soft-closed, so the first logged loss is "
+                    "approximately the base model's context-only NLL on the buffered targets "
+                    "(up to the bias-init leak)."
+                )
+            else:
+                print(
+                    "note: with the zero-init gate the first logged loss IS the base model's "
+                    "context-only NLL on the buffered targets; everything below it is "
+                    "information extracted from the buffer."
+                )
         sampler = lambda step: buffered_online_batch(model, args, device)  # noqa: E731
         model = train.fit(
             model,
