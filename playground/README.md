@@ -37,7 +37,7 @@ Five demos:
 
 The weight blobs are **not committed to nanoACE**. For local development, either
 copy/fetch them from the separate
-[nanoACE-playground-weights](https://github.com/lacerbi/nanoACE-playground-weights)
+[nanoACE-playground-weights](https://github.com/acerbilab/nanoACE-playground-weights)
 repository into `playground/public/models/`, or regenerate them from checkpoints
 in `artifacts`:
 
@@ -105,7 +105,7 @@ contexts flagged because BO training used at least one observed point.
 
 The blobs under `public/models/<task>/` are **gitignored in nanoACE** and hosted
 separately in
-[lacerbi/nanoACE-playground-weights](https://github.com/lacerbi/nanoACE-playground-weights)
+[acerbilab/nanoACE-playground-weights](https://github.com/acerbilab/nanoACE-playground-weights)
 so ordinary nanoACE clones stay small. The Pages workflow checks out that
 repository beside the app and copies the model directories into
 `playground/public/models/` before building.
@@ -160,7 +160,7 @@ setup: repo **Settings → Pages → Source = GitHub Actions**. The production b
 path is `/nanoACE/` (set automatically in CI via `GITHUB_ACTIONS`).
 
 The deploy workflow checks out
-[lacerbi/nanoACE-playground-weights](https://github.com/lacerbi/nanoACE-playground-weights)
+[acerbilab/nanoACE-playground-weights](https://github.com/acerbilab/nanoACE-playground-weights)
 beside the app, copies the model directories into `public/models/`, then fails
 fast if any expected manifest/blob is missing or if `weights.bin` is still a Git
 LFS pointer. It also validates each manifest against its blob size, records

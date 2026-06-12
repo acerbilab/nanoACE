@@ -157,7 +157,7 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
   root.className = "ab-root";
   root.innerHTML = `
     <p class="ab-hint">Coherent joint function draws from a causal AR buffer
-      (<a href="https://github.com/lacerbi/nanoACE/tree/main/extensions/arbuffer">extensions/arbuffer</a>):
+      (<a href="https://github.com/acerbilab/nanoACE/tree/main/extensions/arbuffer">extensions/arbuffer</a>):
       the context is encoded <em>once</em> and cached; each colored curve is decoded autoregressively
       against that cache. Gray curves are independent per-point samples from the diagonal marginals —
       same model, no coherence. Click to add a point · drag to move · shift-click to delete.</p>

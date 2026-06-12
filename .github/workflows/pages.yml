@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       weights_ref:
-        description: Branch, tag, or commit from lacerbi/nanoACE-playground-weights
+        description: Branch, tag, or commit from acerbilab/nanoACE-playground-weights
         required: true
         default: main
 
@@ -36,18 +36,18 @@ jobs:
       - name: Checkout playground model weights
         uses: actions/checkout@v4
         with:
-          repository: lacerbi/nanoACE-playground-weights
+          repository: acerbilab/nanoACE-playground-weights
           ref: ${{ inputs.weights_ref }}
           path: playground-models
           lfs: true
       - name: Record playground model weights revision
         run: |
           weights_sha="$(git -C ../playground-models rev-parse HEAD)"
-          echo "Using lacerbi/nanoACE-playground-weights@$weights_sha"
+          echo "Using acerbilab/nanoACE-playground-weights@$weights_sha"
           {
             echo "### Playground model weights"
             echo ""
-            echo "Repository: lacerbi/nanoACE-playground-weights"
+            echo "Repository: acerbilab/nanoACE-playground-weights"
             echo "Ref input: ${{ inputs.weights_ref }}"
             echo "Resolved commit: $weights_sha"
           } >> "$GITHUB_STEP_SUMMARY"

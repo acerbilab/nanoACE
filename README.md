@@ -98,7 +98,7 @@ Implemented modules:
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
-Current playground weights are hosted [outside this repo](https://github.com/lacerbi/nanoACE-playground-weights).
+Current playground weights are hosted [outside this repo](https://github.com/acerbilab/nanoACE-playground-weights).
 They are exported from retained runs under the shared multi-latent reveal DGP:
 Gaussian 80k steps, GP-1D 200k, SIR 100k, and BO-1D 200k.
 Local `artifacts/` and `playground/public/models/` remain gitignored in nanoACE.
