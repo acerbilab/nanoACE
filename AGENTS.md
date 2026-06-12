@@ -180,10 +180,10 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
 - **`playground/` is a non-core example, not part of the core.** It is a Vite + TypeScript
   in-browser demo that reimplements `ace.py`'s forward pass in TS (parity-tested against
   the PyTorch model) so trained checkpoints run client-side. Current tabs cover GP-1D,
-  Gaussian, SIR, BO-1D, and a **local-only** AR-buffer joint-sampling tab (the
+  Gaussian, SIR, BO-1D, and an AR-buffer joint-sampling tab (the
   `extensions/arbuffer/` model through a parity-tested TS port of its incremental
-  sampler; weights exported locally, not deployed — its tests self-skip when the blob
-  is absent). The core stays torch-only and legible; do not let the JS toolchain or
+  sampler; its tests self-skip when the local blob is absent). The core stays
+  torch-only and legible; do not let the JS toolchain or
   web concerns bleed into `ace.py` or the examples.
   User-facing playground text (hints, explainer modals, README) is didactic and
   matter-of-fact: state the task, what ACE does, and the honest trade-offs — no

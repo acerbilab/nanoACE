@@ -89,7 +89,9 @@ Transformer Probabilistic Models* (ICLR 2026) — "the paper" below.
   `forward_buffered` branches and records the read mode in the fixture. The
   retained 200k swap is back to "repoint `ARBUF_CKPT`, re-run export + parity
   together" — done 2026-06-12 once the run completed: the playground tab now
-  serves the retained `gp1d_arbuffer.pt` weights (still local-only).
+  serves the retained `gp1d_arbuffer.pt` weights. Deployed the same day: the
+  blob was published to `acerbilab/nanoACE-playground-weights` and the Pages
+  workflow now expects five models.
 - **Bugfix:** `plot_demo` lacked `@torch.no_grad()`; with an unfrozen model
   its forward outputs require grad and matplotlib's implicit `.numpy()`
   raised. Latent since the initial implementation (frozen-base outputs don't

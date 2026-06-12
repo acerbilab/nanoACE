@@ -117,8 +117,8 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
     );
     model = new BufferedACEModel(weights);
   } catch {
-    el.innerHTML = `<p class="loading">The AR-buffer model is not part of this deployment yet
-      (the tab is local-only for now). To run it locally, export the
+    el.innerHTML = `<p class="loading">The AR-buffer model weights are unavailable here.
+      To run this tab locally, export the
       weights with <code>export_weights.py --task gp1d_arbuffer</code> — see the
       "Run locally" section of <code>playground/README.md</code>.</p>`;
     return;

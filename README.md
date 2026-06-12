@@ -75,9 +75,8 @@ Implemented modules:
   (separate toolchain) where trained models run client-side — GP-1D, Gaussian,
   SIR, and BO-1D, with interactive conditioning, latent/prior controls, and
   oracle overlays where practical. BO-1D stays no-oracle and overlays
-  optimum-location/value marginals on the editable regression plot. A fifth,
-  **local-only** tab runs the AR-buffer extension's coherent joint sampling
-  (weights not yet deployed; see below).
+  optimum-location/value marginals on the editable regression plot. A fifth
+  tab runs the AR-buffer extension's coherent joint sampling (see below).
   See [playground/README.md](playground/README.md). The Python core stays
   torch-only; the playground is an example built on a parity-tested TS port of
   `ace.py`'s forward pass.
@@ -90,26 +89,23 @@ Implemented modules:
   budget). Encodes the context once and draws many coherent joint
   function samples from the cached encoding (vs `sample_ar`'s per-step
   re-encoding), plus one-pass joint density evaluation. Also the repository's
-  extensibility demo (no core file changes). A local-only playground tab runs
-  its incremental sampler in the browser — the TS port follows the retained
-  concat-read architecture, with the retained 200k weights exported locally
-  (not yet deployed). See
+  extensibility demo (no core file changes). A playground tab runs its
+  incremental sampler in the browser — the TS port follows the retained
+  concat-read architecture and serves the retained 200k weights. See
   [extensions/arbuffer/README.md](extensions/arbuffer/README.md).
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 
 Current playground weights are hosted [outside this repo](https://github.com/acerbilab/nanoACE-playground-weights).
 They are exported from retained runs under the shared multi-latent reveal DGP:
-Gaussian 80k steps, GP-1D 200k, SIR 100k, and BO-1D 200k.
+Gaussian 80k steps, GP-1D 200k, SIR 100k, and BO-1D 200k — plus the AR-buffer
+model (a 200k concat-read fine-tune on top of the GP-1D checkpoint).
 Local `artifacts/` and `playground/public/models/` remain gitignored in nanoACE.
 
-Next work: inspect the deployed Pages build against the public weights, add
-manifest-level training provenance on the next export, consider whether the
-shared prior path warrants a discrete-latent runtime prior, and decide
-whether/when to deploy the AR-buffer tab (the retained 200k concat-read
-artifact — ~97% of the slow-AR gap — is already swapped into the local tab;
-deploying means publishing the `gp1d_arbuffer` blob to the weights repo and
-adding it to the Pages workflow's expected models).
+Next work: inspect the deployed Pages build against the public weights (now
+five models, including the AR-buffer tab), add manifest-level training
+provenance on the next export, and consider whether the shared prior path
+warrants a discrete-latent runtime prior.
 
 ## Setup
 

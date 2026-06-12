@@ -34,6 +34,8 @@ Amended 2026-06-12: the retained 200k concat run completed and was **swapped in*
 (`ARBUF_CKPT` → `artifacts/gp1d_arbuffer.pt`; blob + fixtures regenerated together;
 all tests green at the same tolerances). The in-tab model-provenance note was removed
 (user decision: not something the tab's audience needs; provenance lives in the docs).
+Deployed 2026-06-12 (after the org move to `acerbilab`): blob published to the weights
+repo, `pages.yml` expects five models, "local-only" framing retired from the docs.
 Also added (separate small feature): per-tab "?" explainer modals via
 `playground/src/explain.ts`. The fixed grid moved 32 → **64** (user decision) to match
 the retained fine-tune's K=64 — a 64-step chain exercises exactly the trained prefix

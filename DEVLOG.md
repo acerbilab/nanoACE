@@ -22,8 +22,12 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 - **The AR-buffer tab now serves the retained 200k concat-read weights**
   (`artifacts/gp1d_arbuffer.pt`, K=64, joint training, ~97% of the slow-AR
   joint-density gap — see `extensions/arbuffer/DEVLOG.md`): `ARBUF_CKPT` repointed,
-  blob + fixtures regenerated together, all tests green. Still local-only; deploying
-  the tab is a separate decision (weights repo + Pages workflow).
+  blob + fixtures regenerated together, all tests green.
+- **The tab is deployed** (same day, after the repos moved to the `acerbilab` org):
+  the `gp1d_arbuffer` blob was published to `acerbilab/nanoACE-playground-weights`
+  and `pages.yml` now copies/validates five models. The tests' self-skip behavior
+  stays (clones without local exports skip the arbuf suites), and in CI the blob is
+  present so they run.
 
 ---
 

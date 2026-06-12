@@ -73,18 +73,18 @@ describe.skipIf(!HAVE)("AR-buffer demo UI smoke", () => {
   });
 });
 
-// Deliberately NOT behind the skip guard: this is exactly the path a deployment
-// without the blob takes, so it must stay covered when the model dir is absent.
+// Deliberately NOT behind the skip guard: this is the fallback path when the
+// blob is absent, so it must stay covered on clones without local exports.
 describe("AR-buffer demo missing-model notice", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("renders the local-only notice when the model is absent", async () => {
+  it("renders the export-it-locally notice when the model is absent", async () => {
     vi.stubGlobal("fetch", async () => {
       throw new Error("404");
     });
     const el = document.createElement("div");
     document.body.appendChild(el);
     await mountArbuf(el);
-    expect(el.textContent).toContain("local-only");
+    expect(el.textContent).toContain("export_weights.py --task gp1d_arbuffer");
   });
 });

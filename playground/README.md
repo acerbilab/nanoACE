@@ -28,10 +28,9 @@ Five demos:
   edit context points / pin latents like the GP tab, then watch a few
   **coherent joint function draws** decode autoregressively from one cached
   context encoding (animated), next to the diagonal band and independent
-  per-point marginal samples. **Local-only for now**: the weights are the
-  retained 200k concat-read fine-tune (K=64, joint training), exported locally
-  and not yet deployed; the tab and its tests self-skip/notice gracefully when
-  the blob is absent.
+  per-point marginal samples. The weights are the retained 200k concat-read
+  fine-tune (K=64, joint training); the tab and its tests self-skip/notice
+  gracefully when the blob is absent locally.
 
 ## Run locally
 
@@ -47,7 +46,7 @@ python playground/export_weights.py --task gp1d     --checkpoint artifacts/gp1d.
 python playground/export_weights.py --task gaussian --checkpoint artifacts/gaussian_toy.pt --out playground/public/models/gaussian
 python playground/export_weights.py --task sbi_sir  --checkpoint artifacts/sbi_sir.pt      --out playground/public/models/sbi_sir
 python playground/export_weights.py --task bo1d     --checkpoint artifacts/bo1d.pt         --out playground/public/models/bo1d
-# local-only AR-buffer tab (extensions/arbuffer/ retained concat-read checkpoint)
+# AR-buffer tab (extensions/arbuffer/ retained concat-read checkpoint)
 python playground/export_weights.py --task gp1d_arbuffer --checkpoint artifacts/gp1d_arbuffer.pt --out playground/public/models/gp1d_arbuffer
 
 cd playground
@@ -137,8 +136,8 @@ export), a packed `forward_buffered` pass with per-layer states (buffer row j �
 TS append pass j, target row m ↔ decode step m, so divergence localizes to a
 layer), and a teacher-forced `sample_joint` chain (the exact incremental
 semantics the TS sampler implements). `parity.py` skips this block, and the TS
-tests self-skip, when the local-only checkpoint/blob is absent — so the deploy
-workflow's `npm test` stays green with only the four public models.
+tests self-skip, when the checkpoint/blob is absent — so `npm test` stays green
+on clones without local exports.
 
 Weights ship as **float16** (half the blob size). `export_weights.py` rounds each
 parameter with torch's `.half().float()` before serializing, and `parity.py`
