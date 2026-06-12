@@ -138,23 +138,13 @@ Phase 5 — validation run + gates:
 - [~] validation fine-tune from the retained GP-1D 200k checkpoint (CUDA; ~10–20k
       episode-batch steps ≈ a few hours, see Risks — budget trimmed by the smoke
       measurement). MEASURED 2026-06-12: ~1.06 s/step at full defaults (B=64, pool 128,
-      T=16, RTX 4060 laptop) ⇒ 5k ≈ 1.5 h, 10k ≈ 3 h, 20k ≈ 6 h. User-chosen budget:
-      **5k steps** (launched 2026-06-12, `--ckpt-every 1000`, log at
-      `artifacts/gp1d_aline_5k.log`, artifact `artifacts/gp1d_aline.pt`).
-      RESULTS (5k = ~2.5k policy updates, completed 2026-06-12, avg 1.02 s/step):
-      policy **beats random** on predictive RMSE (0.220 vs 0.248, below along the
-      whole curve) and on θ log q (−0.124 vs −0.147) — the policy learns and the
-      joint fine-tune kept `q_φ` oracle-calibrated (kernel KL 0.002–0.025, means
-      track the oracle; stds run wide on the demo periodic case). **US still ahead
-      on prediction** (0.194; tracks until ~step 8) — read as undertraining: reward
-      still climbing (+0.074 → ~+0.10), train NLL −0.4 by the end, and the budget is
-      <1% of the paper's episode count. **Targeting contrast null** (δ = −0.002);
-      honest hypothesis: coverage queries also pin the lengthscale in GP-1D, so the
-      matched/mismatched gap may be intrinsically small for ℓ (the paper's contrast
-      demo was psychometric, not GP) — a kernel-goal contrast would be a fairer
-      instrument (eval-only change, fallback #4). Reward tails bounded as predicted.
-      Next per the fallback order: fresh longer run (10–20k), same recipe, one
-      change at a time. Gate criteria:
+      T=16, RTX 4060 laptop) ⇒ 5k ≈ 1.5 h, 10k ≈ 3 h, 20k ≈ 6 h. First run: 5k
+      steps, completed 2026-06-12 — **results, gate readings, and interpretation
+      live in `extensions/aline/DEVLOG.md`** (plan files track plan and progress
+      only; results belong to DEVLOGs, a correction of the arbuffer-plan habit).
+      Outcome in one line: policy learns (beats random both ways, calibration
+      kept); US gap and ℓ-contrast still open; next per fallback order = longer
+      run, same recipe. Gate criteria:
       learned policy dominates random on predictive RMSE; competitive with US;
       parameter-ξ `log q(θ_true)` learned > random; targeting contrast positive;
       oracle calibration on acquired contexts comparable to the fixed-case gp1d
@@ -166,7 +156,9 @@ Phase 5 — validation run + gates:
 Phase 6 — docs:
 - [ ] `extensions/aline/README.md` (what/why, the ACE-native thesis, reuse story,
       recipe, commands, honest performance notes)
-- [ ] `extensions/aline/DEVLOG.md` (local design log: the decisions + deviations below)
+- [x] `extensions/aline/DEVLOG.md` (created 2026-06-12, ahead of the rest of Phase 6:
+      design decisions + deviations + dated run entries; all results and
+      interpretation live there, not here)
 - [ ] root `DEVLOG.md`: short dated pointer entry
 - [ ] root `README.md`: one Current Status bullet; `AGENTS.md`: extensions list mention
 - [ ] update this plan's Status + tracker; `/doublecheck` pass on the implementation
