@@ -64,13 +64,29 @@ describe.skipIf(!HAVE)("ALINE demo UI smoke", () => {
     el.querySelector<HTMLButtonElement>(".al-step")!.click();
     expect(counter.textContent).toContain("step 1/");
 
-    // Goal switch re-scores (kernel goal on, predictive off).
+    // Plain click SWITCHES the goal exclusively (pred and parameters never mix).
+    const sel = (cls: string) => el.querySelector<HTMLButtonElement>(cls)!.classList.contains("sel");
+    const shiftClick = (cls: string) =>
+      el
+        .querySelector<HTMLButtonElement>(cls)!
+        .dispatchEvent(new MouseEvent("click", { shiftKey: true, bubbles: true }));
     el.querySelector<HTMLButtonElement>(".g-kernel")!.click();
-    el.querySelector<HTMLButtonElement>(".g-pred")!.click();
-    expect(el.querySelector<HTMLButtonElement>(".g-kernel")!.classList.contains("sel")).toBe(true);
-    // Deselecting the last goal is a no-op (at least one stays active).
-    el.querySelector<HTMLButtonElement>(".g-kernel")!.click();
-    expect(el.querySelector<HTMLButtonElement>(".g-kernel")!.classList.contains("sel")).toBe(true);
+    expect(sel(".g-kernel")).toBe(true);
+    expect(sel(".g-pred")).toBe(false);
+    // Shift-click COMBINES parameter goals…
+    shiftClick(".g-ell");
+    expect(sel(".g-ell")).toBe(true);
+    expect(sel(".g-kernel")).toBe(true);
+    // …toggles them off again…
+    shiftClick(".g-ell");
+    expect(sel(".g-ell")).toBe(false);
+    // …but cannot empty the selection.
+    shiftClick(".g-kernel");
+    expect(sel(".g-kernel")).toBe(true);
+    // Predictive never combines: shift-click on it still switches exclusively.
+    shiftClick(".g-pred");
+    expect(sel(".g-pred")).toBe(true);
+    expect(sel(".g-kernel")).toBe(false);
 
     // Reveal toggle and restart (same hidden function, back to the seed).
     el.querySelector<HTMLInputElement>(".al-reveal")!.click();

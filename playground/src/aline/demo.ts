@@ -27,7 +27,6 @@ import { sampleEpisode, type EpisodeDraw } from "./env";
 import {
   alineStep,
   goalActive,
-  goalIsNovelCombo,
   nearestCandidate,
   type AlineStep,
   type Goal,
@@ -189,7 +188,7 @@ export async function mountAline(el: HTMLElement): Promise<void> {
           <label class="al-row"><input type="radio" name="al-mode" class="al-mode-oracle"/>enter your own points</label>
         </fieldset>
         <fieldset>
-          <legend>goal — what should the queries teach the model?</legend>
+          <legend>goal — what should the queries teach the model? (shift-click combines)</legend>
           <div class="al-goal-btns">
             <button class="g-pred" title="Improve the predictive band everywhere">predict f(x)</button>
             <button class="g-ell" title="Pin down the lengthscale">lengthscale ℓ</button>
@@ -376,11 +375,22 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     recompute();
   });
 
+  // Plain click switches the goal; shift-click combines parameter goals.
+  // Predictive + parameter goals together were never trained (xi is either-or),
+  // so pred never combines: any click involving it switches exclusively.
   (Object.keys(goalBtns) as Array<keyof Goal>).forEach((key) => {
-    goalBtns[key].addEventListener("click", () => {
-      const next = { ...goal, [key]: !goal[key] };
-      if (!goalActive(next)) return; // at least one goal stays selected
-      goal[key] = next[key];
+    goalBtns[key].addEventListener("click", (e) => {
+      const combine = e.shiftKey && key !== "pred" && !goal.pred;
+      if (combine) {
+        const next = { ...goal, [key]: !goal[key] };
+        if (!goalActive(next)) return; // at least one goal stays selected
+        goal[key] = next[key];
+      } else {
+        goal.pred = key === "pred";
+        goal.ell = key === "ell";
+        goal.scale = key === "scale";
+        goal.kernel = key === "kernel";
+      }
       epoch += 1;
       updateControls();
       recompute();
@@ -464,9 +474,6 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     });
     if (obs.length > ALINE.CONTEXT_HARD) {
       reasons.push(`${obs.length} points (the base model never saw > ${ALINE.CONTEXT_HARD})`);
-    }
-    if (goalIsNovelCombo(goal)) {
-      reasons.push("parameter + predictive goal together (untrained novel combination)");
     }
     return reasons;
   }

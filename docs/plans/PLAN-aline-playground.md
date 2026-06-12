@@ -6,6 +6,14 @@ pre-approval, docs-focused pass after Phase 1, full verification in Phase 6.
 Remaining follow-up lives outside this plan: the longer fine-tune, then the
 mechanical weights swap + deploy recorded under Out-of-scope below).
 
+Amended 2026-06-12 (post-completion): user-facing copy rewritten (one-line hint;
+the explainer grounds the demo setup and drops internal project-status talk).
+Goal-selector semantics changed: plain click SWITCHES the goal, shift-click
+COMBINES parameter goals, and the untrained predictive+parameter mix is no longer
+selectable — superseding Design 9's "mixed allowed but flagged" (the novel-combo
+OOD flag and `goalIsNovelCombo` were removed with it; trained latent subsets,
+including pairs and all-three, remain combinable).
+
 Reference: Huang, Wen, Bharti, Kaski & Acerbi (2025), *ALINE: Joint Amortization for
 Bayesian Inference and Active Data Acquisition* (NeurIPS 2025). Extension under
 `extensions/aline/` (see `extensions/aline/DEVLOG.md` and `docs/plans/PLAN-aline.md`);

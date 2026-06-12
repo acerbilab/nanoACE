@@ -41,11 +41,6 @@ export function goalActive(g: Goal): boolean {
   return g.pred || g.ell || g.scale || g.kernel;
 }
 
-/** Parameter + predictive goals together were not seen in training (either-or). */
-export function goalIsNovelCombo(g: Goal): boolean {
-  return g.pred && (g.ell || g.scale || g.kernel);
-}
-
 export interface Obs {
   x: number;
   y: number;

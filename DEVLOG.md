@@ -16,8 +16,9 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
   against `gp1d.draw_gp`) answers queries; the user only chooses *where* to
   sample, with the learned acquisition policy rendered as advice — π(x | data,
   goal) along the x-axis next to the classical uncertainty-sampling pick — a
-  live goal selector (predictive vs latent subsets, mid-episode switches,
-  novel combos flagged), "Follow policy" auto-unrolling, and RMSE /
+  live goal selector (click switches, shift-click combines parameter goals;
+  the untrained predictive+parameter mix is not selectable; mid-episode
+  switches), "Follow policy" auto-unrolling, and RMSE /
   log q(θ_true) tracked against the hidden truth. A secondary "your own data"
   mode keeps the advice live on free-edited points. The TS port adds a policy
   decoder on top of the untouched base port (final-state reads from the
