@@ -201,4 +201,12 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   fine-tune with the 50/50 curriculum). An automatic step-0 parity check guards the
   coupling to core internals (bitwise for the plain forward in both modes and for the
   buffered forward in separate-read mode; reported drift for the concat read): if
-  `ace.py`'s forward changes, the warm start fails loudly.
+  `ace.py`'s forward changes, the warm start fails loudly. And `extensions/aline/`,
+  ALINE (Huang et al., 2025): joint amortized inference + active data acquisition on
+  GP-1D, warm-started from a trained GP-1D checkpoint — the unchanged core ACE is the
+  inference network (the acquisition goal ξ = which target tokens are active; query
+  candidates are data QUERY tokens), plus a small read-only policy decoder over the
+  candidate pool trained with REINFORCE on self-estimated information gain. Alternating
+  NLL/policy phases with a structural φ/ψ gradient firewall; the inference path is
+  asserted bit-equal to the base ACE forward (a permanent parity guard, not just
+  step-0).

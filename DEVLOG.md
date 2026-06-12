@@ -9,6 +9,25 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-12 — ALINE extension (`extensions/aline/`): joint amortized inference + active acquisition
+
+- **Second `extensions/` entry: `extensions/aline/`** — ALINE (Huang et al., 2025,
+  NeurIPS), joint amortized Bayesian inference and active data acquisition, on the
+  GP-1D active-learning task, warm-started from the retained GP-1D checkpoint. The
+  ACE-native re-expression is the point: the inference network is the **unchanged**
+  core `ACE` (parameter/predictive targets are QUERY tokens; the paper's target
+  specifier ξ collapses into *which target tokens are active*, and query candidates
+  are data QUERY tokens), so the only new model surface is a small read-only policy
+  decoder trained with REINFORCE on self-estimated information gain, behind a
+  structural φ/ψ gradient firewall and a permanent bitwise parity guard on the
+  inference path. First validation run (5k): the policy learns (beats random on
+  both goal families, calibration kept); the US gap and the targeting contrasts
+  remain open at that budget. Design decisions, paper deviations, and run results
+  in `extensions/aline/DEVLOG.md`; plan + verification log in
+  [docs/plans/PLAN-aline.md](docs/plans/PLAN-aline.md).
+
+---
+
 ## 2026-06-12 — Per-tab playground explainers; retained AR-buffer weights swapped in
 
 - **Every playground tab gained a "?" explainer.** A small inline button at the end of

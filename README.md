@@ -93,6 +93,16 @@ Implemented modules:
   incremental sampler in the browser — the TS port follows the retained
   concat-read architecture and serves the retained 200k weights. See
   [extensions/arbuffer/README.md](extensions/arbuffer/README.md).
+- [extensions/aline/](extensions/aline/): a **non-core** extension implementing
+  ALINE (Huang et al., 2025) — joint amortized Bayesian inference and active
+  data acquisition — on the GP-1D task, warm-started from a trained GP-1D
+  checkpoint. The inference network is the unchanged core ACE (parameter and
+  predictive targets are QUERY tokens; the acquisition goal is *which target
+  tokens are active*); the only new model part is a small read-only policy
+  decoder that scores a candidate pool, trained with REINFORCE on
+  self-estimated information gain, with a structural gradient firewall between
+  the two. The inference path is asserted bit-equal to the base ACE forward.
+  See [extensions/aline/README.md](extensions/aline/README.md).
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 

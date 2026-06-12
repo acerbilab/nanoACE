@@ -1,7 +1,11 @@
 # Plan: ALINE extension (`extensions/aline/`)
 
 Created: 2026-06-12
-Status: PENDING APPROVAL
+Status: IMPLEMENTED (Phases 1–4 + Phase 6 docs done; Phase 5 validation iterating —
+5k run complete, results in `extensions/aline/DEVLOG.md`, longer fine-tune pending).
+A playground tab is planned separately:
+[PLAN-aline-playground.md](PLAN-aline-playground.md) (its Phase 1 closed this plan's
+Phase 6 doc items, 2026-06-12).
 
 Reference: Huang, Wen, Bharti, Kaski & Acerbi (2025), *ALINE: Joint Amortization for
 Bayesian Inference and Active Data Acquisition* (NeurIPS 2025). Paper markdown in
@@ -154,14 +158,17 @@ Phase 5 — validation run + gates:
       arbuffer pattern)
 
 Phase 6 — docs:
-- [ ] `extensions/aline/README.md` (what/why, the ACE-native thesis, reuse story,
-      recipe, commands, honest performance notes)
+- [x] `extensions/aline/README.md` (what/why, the ACE-native thesis, reuse story,
+      recipe, commands, honest performance notes) [DONE 2026-06-12]
 - [x] `extensions/aline/DEVLOG.md` (created 2026-06-12, ahead of the rest of Phase 6:
       design decisions + deviations + dated run entries; all results and
       interpretation live there, not here)
-- [ ] root `DEVLOG.md`: short dated pointer entry
-- [ ] root `README.md`: one Current Status bullet; `AGENTS.md`: extensions list mention
-- [ ] update this plan's Status + tracker; `/doublecheck` pass on the implementation
+- [x] root `DEVLOG.md`: short dated pointer entry [DONE 2026-06-12]
+- [x] root `README.md`: one Current Status bullet; `AGENTS.md`: extensions list mention
+      [DONE 2026-06-12]
+- [x] update this plan's Status + tracker [DONE 2026-06-12]; `/doublecheck`: the
+      implementation had the Phase 4.5 three-reviewer pass; the doc surface gets a
+      docs-focused pass under PLAN-aline-playground.md Phase 1
 
 ## Summary
 
