@@ -12,86 +12,134 @@ extension's local DEVLOG once created).
 
 ## Progress tracker
 
-Phase 1 — model (`extensions/aline/aline.py`):
-- [ ] `extensions/aline/` skeleton + repo-root `sys.path` bootstrap (arbuffer pattern)
-- [ ] `PolicyBlock` (pre-LN residual: query→context cross-attn, query→target cross-attn,
+Phase 1 — model (`extensions/aline/aline.py`):  [DONE 2026-06-12]
+- [x] `extensions/aline/` skeleton + repo-root `sys.path` bootstrap (arbuffer pattern)
+- [x] `PolicyBlock` (pre-LN residual: query→context cross-attn, query→target cross-attn,
       MLP; own kv LayerNorms; `need_weights=False`; no query–query self-attention)
-- [ ] `ALINE(ACE)`: `policy_blocks` ModuleList + `policy_head`; `forward_with_states`
-      (core block loop kept verbatim, returns final ctx/tgt states alongside
-      `Predictions`); `policy_logits(query, C, G, masks)` with the gradient firewall
-      (no-grad query embedding, detached C/G); `base_parameters()` / `policy_parameters()`
-- [ ] `load_warm_start(path, device, variables, check_batch)` with the arbuffer-style
-      strict guard (`unexpected == []`; missing keys all under `policy_blocks.` /
-      `policy_head.`) + step-0 bitwise parity assert vs a freshly loaded base `ACE`
-- [ ] `load_aline_checkpoint(path, device, variables)` (policy depth inferred from
+- [x] `ALINE(ACE)`: `policy_blocks` ModuleList + `policy_norm` + `policy_head`;
+      `forward_with_states` (core block loop kept verbatim, returns final ctx/tgt states
+      alongside `Predictions`); `policy_logits(query, C, G, masks)` with the gradient
+      firewall (no-grad query embedding, detached C/G); `base_parameters()` /
+      `policy_parameters()` + partition assert (note: `POLICY_PREFIXES` also covers the
+      added `policy_norm.`)
+- [x] `load_warm_start(path, device, variables, check_batch)` with the arbuffer-style
+      strict guard (`unexpected == []`; missing keys all under `POLICY_PREFIXES`)
+      + step-0 bitwise parity assert vs a freshly loaded base `ACE`
+- [x] `load_aline_checkpoint(path, device, variables)` (policy depth inferred from
       state-dict keys, arbuffer's read-mode-inference pattern)
-- [ ] verify: bitwise parity of `forward_with_states` predictions vs `ACE.forward`
-      (random batches, CPU + CUDA); key guard trips on wrong checkpoints; gradient
-      isolation (PG loss → grads only on `policy_*`; NLL → grads only on base params);
-      masked pool candidates get `-inf` logits and zero probability
+- [x] verify (`artifacts/scratch_aline_phase1.py`, CPU + CUDA, all pass): bitwise parity
+      of plain forward and `forward_with_states` vs base `ACE` (fixed-eval + random
+      online-style batches); missing-key guard trips; checkpoint round-trip with depth
+      inference; gradient isolation both directions (PG → all-and-only `policy_*`;
+      NLL → base only); masked candidates get `-inf` logits, zero probability, never
+      argmax-selected
 
-Phase 2 — episode environment (`extensions/aline/gp1d_aline.py`, env half):
-- [ ] `draw_episode_physics(b, n_pool, m_targets, jitter)`: one `gp1d.draw_gp` call on
-      the union of pool and predictive-target locations (CPU float64), gp1d hyperprior
-- [ ] `sample_xi(b)`: 50% predictive / 50% parameter rows; parameter subsets via
+Phase 2 — episode environment (`extensions/aline/gp1d_aline.py`, env half):  [DONE 2026-06-12]
+- [x] episode physics: `gp1d.draw_instances(b, n_points=pool+M)` (one joint CPU-float64
+      draw; pool observations become lookups), gp1d hyperprior unchanged
+- [x] `sample_xi(b)`: 50% predictive / 50% parameter rows; parameter subsets via
       `sample_reveal_mask(3, b, q=0.0)` (the non-empty subset/count mixture)
-- [ ] `assemble_episode(...)`: superset target Tokens `[ℓ_ell, ℓ_scale, ℓ_kernel,
+- [x] `assemble_episode(...)`: superset target Tokens `[ℓ_ell, ℓ_scale, ℓ_kernel,
       x*_1..M]` with truth in `value`/`value_index` and ξ as the per-row mask; query
       Tokens = data-`y` QUERY tokens at pool locations; preallocated context block of
       width `1 + T` (seed point active, columns flipped on as queries land); pool
-      availability mask
-- [ ] `rollout(...)`: T+1 forwards (states D_0..D_T); per-step NLL (prediction phases),
-      per-step reward `R_t = mean_active(log q_t − log q_{t−1})` from detached log-probs,
-      one-step-delayed PG backward (policy phases), action drivers
-      {policy-sample, policy-argmax, random, us}
-- [ ] verify: reward telescoping identity `Σ_t R_t == log q(·|D_T) − log q(·|D_0)` on a
-      no-grad rollout (float tolerance); ξ-mask inertness (perturbing a masked target's
-      truth changes no loss, reward, or policy logit); random-policy rollout NLL is
-      sane vs the warm-started gp1d level; chosen candidates leave the pool exactly once
+      availability mask (note: `observe` replaces `query.mask` *functionally* — the
+      deferred PG graph holds references to earlier masks, in-place scatter would
+      corrupt it)
+- [x] `rollout(...)`: T+1 forwards (states D_0..D_T); per-step NLL backward (prediction
+      phases; trunk graphs freed per step), rewards from consecutive detached
+      log-probs, ONE deferred PG backward at episode end (policy-side graphs only;
+      covers both immediate and reward-to-go weighting + on-policy row masking for
+      `--random-frac` rows), drivers {policy, argmax, random, us}, optional `on_step`
+      hook (ξ-switch demo), `track_predictions` for eval curves
+- [x] verify (`artifacts/scratch_aline_phase23.py`, CPU + CUDA, all pass): telescoping
+      identity exact (max |diff| 0.0, per row, raw rewards); ξ-mask inertness (corrupted
+      masked targets: bitwise-equal predictions, policy logits, gated log-probs); pool
+      bookkeeping (distinct actions, exact availability mask, full context); mid-rollout
+      ξ switch applies; goal-sensitivity probe: policy logits respond to ξ (~0.17 logit
+      shift at random init); random-policy NLL at warm-started gp1d level (~0.0–0.25 on
+      the 10-step CUDA smoke, vs ~0.9–1.1 from scratch)
 
-Phase 3 — training loop + CLI (`gp1d_aline.py`, training half):
-- [ ] `fit_episodes(model, args)`: alternating phase schedule (prediction-only prefix of
-      `--warmup-pred-steps`, then step-parity alternation), `mix_seed(seed, step)` reseed
-      at the top of every step, two Adam optimizers (base at `--lr`, policy at
-      `--policy-lr`) with per-group cosine schedules and grad clip, per-step backward +
-      one optimizer step per episode batch, batch-mean reward baseline,
-      `--reward-to-go`, `--update-mode {alternate,simultaneous}`, phase-appropriate
-      no-grad (trunk no-grad in policy phases; policy module no-grad in prediction
-      phases), logging (NLL, mean reward, baseline), resumable checkpoints (additive
-      payload keys for the second optimizer/scheduler)
-- [ ] CLI on `train.common_parser()` + `set_defaults` (gp1d model defaults) + task
-      flags; main flow: warm start (or from-scratch) → fit_episodes → save → evaluate →
-      plot; document inherited no-op flags
-- [ ] verify: `--steps 20` smoke runs CPU + CUDA (warm-start and from-scratch);
-      two same-seed short runs give identical weights (max|dW| = 0); `--eval-only
-      --load-checkpoint` round-trips; `--resume` continues with both optimizers restored
+Phase 2.5 — found during implementation (recorded):
+- [x] autograd version-counter hazard: deferred PG backward + in-place `query.mask`
+      mutation ⇒ functional mask replacement in `observe` (comment in code)
+- [x] cosine LR multiplier is exactly 0 on a run's final step (core `_build_scheduler`
+      convention) — harmless for real runs, but 1-step test runs train at LR 0; the
+      scratch's phase-isolation checks use `--lr-schedule constant`
 
-Phase 4 — evaluation, diagnostics, plot:
-- [ ] `evaluate(model, args)`: held-out episode sweep at a fixed eval seed —
-      (a) predictive-ξ RMSE-vs-t curves for learned / random / US policies,
-      (b) parameter-ξ `log q(θ_true)`-vs-t curves for learned / random,
-      (c) targeting contrast: `log q(θ_S)` improvement under matched ξ vs mismatched ξ,
-      (d) oracle calibration: `gp1d.gp_oracle` on a few policy-acquired contexts vs
-      ALINE's hyperparameter marginals (via `diagnostics.query_log_density` and
-      `gp1d.kernel_posterior`), (e) reward histograms split by target type;
-      compact printed metrics dict (house style)
-- [ ] US baseline: one extra forward with the remaining pool as target tokens, score
-      by `Predictions.continuous_var()`
-- [ ] fixed diagnostic figure (`artifacts/gp1d_aline.png`): fixed-seed episode function;
-      query-placement panels under contrasting ξ (predictive vs single-latent), the
-      predictive band before/after acquisition, posterior marginals vs the grid oracle,
-      and the metric curves with baselines; argmax actions so a checkpoint regenerates
-      the same figure
-- [ ] runtime ξ-switch demo (mask flip mid-episode; printed/plotted query shift —
-      read qualitatively, D.4-style: the switched goal/context pairing is only
-      indirectly trained, so this is a demo, not a gate)
-- [ ] verify: plots regenerate deterministically from a saved checkpoint; metrics keys
-      stable across `--eval-only` reruns
+Phase 3 — training loop + CLI (`gp1d_aline.py`, training half):  [DONE 2026-06-12]
+- [x] `fit_episodes(model, args)`: alternating phase schedule (prediction-only prefix of
+      `--warmup-pred-steps`, then step-parity alternation, policy first), `mix_seed`
+      reseed per step, two Adam optimizers with per-group cosine schedules
+      (`phase_counts` gives each group its own `T_max`; reuses `train._build_scheduler`)
+      and per-group grad clip, one optimizer step per episode batch, batch-mean reward
+      baseline, `--reward-to-go`, `--update-mode {alternate,simultaneous}`,
+      `--freeze-base`, phase-appropriate no-grad, logging incl. s/step, resumable
+      checkpoints (`save_resumable`: house payload + `optimizer_policy` /
+      `scheduler_policy` additive keys; base pair restored via `train.load_train_state`)
+- [x] CLI on `train.common_parser()` + `set_defaults` (gp1d model defaults) + task
+      flags as planned; `main`: warm start (strict guard + step-0 parity vs
+      `gp1d.fixed_eval_batch`) / from-scratch / resume / eval-only; inherited no-op
+      flags documented in `parse_args` (and `--warmup` honored as per-group LR warmup)
+- [x] verify: smoke runs all pass — CPU from-scratch 20-step (full main: fit + eval +
+      save + plot), CUDA warm-started 10-step at full defaults (step-0 parity vs
+      `artifacts/gp1d.pt` OK; positive rewards ~+0.07; NLL at gp1d level), CUDA
+      from-scratch 6-step; same-seed reproducibility max|dW| = 0; resume-exactness
+      (6 straight == 3 + resume-to-6) max|dW| = 0 with both optimizers restored;
+      `--eval-only --load-checkpoint` reproduces the training run's eval metrics
+      digit-for-digit
+
+Phase 4 — evaluation, diagnostics, plot:  [DONE 2026-06-12]
+- [x] `evaluate(model, args)`: held-out sweep at `EVAL_SEED` (identical physics across
+      drivers per sweep) — (a) predictive RMSE-vs-t for aline/random/us, (b) parameter
+      `log q(θ_true)`-vs-t for aline/random, (c) targeting contrast (acquire under
+      ξ=ell vs ξ=pred on identical episodes, score `log q(ell_true|D_T)`),
+      (d) oracle calibration via `acquired_gpbatch` adapter → `gp1d.gp_oracle` +
+      `diagnostics.query_log_density` + `gp1d.kernel_posterior`, (e) reward stats by
+      target type; compact printed metrics (house style)
+- [x] US baseline: one extra forward with the pool as target tokens, scored by
+      `Predictions.continuous_var()`
+- [x] fixed diagnostic figure: gp1d EVAL_* demo function (pool + linspace targets),
+      six panels — predictive band before/after + query order, query placement by goal,
+      ell marginal vs oracle, RMSE curves, log-q curves, contrast bars; argmax actions
+      so a checkpoint regenerates the same figure
+- [x] runtime ξ-switch demo (mask flip at T/2 via the rollout `on_step` hook; plotted
+      in the placement panel — demo, not a gate)
+- [x] verify: `--eval-only` rerun reproduces all printed metrics digit-for-digit and
+      regenerates the figure; six panels render correctly on the smoke model
+      (untrained flatness expected); goal-sensitivity of placement is a Phase-5
+      training outcome (logits respond to ξ at init, argmax ties until trained)
+
+Phase 4.5 — implementation `/doublecheck` (2026-06-12; three Opus reviewers: RL
+machinery / model + plan fidelity + tracker accuracy / eval + core APIs):
+- [x] no blockers. Verified correct: rollout indexing (no off-by-one; final forward
+      action-free), autograd safety in all three phase modes (per-step NLL backward
+      precedes mutation; deferred PG graphs reference only no-grad embeds, detached
+      states, and functionally-replaced masks), exact gradient firewall, phase /
+      per-group-scheduler / zero-grad semantics, (seed, step) RNG purity, token
+      layouts vs `gp1d.assemble`, `GPBatch`/oracle adapter field order, eval
+      cross-driver episode identity, param surface (~0.4M policy on 1.2M base,
+      base bit-identical), tracker claims substantiated, module docstring's
+      reference-implementation claims re-corroborated against `temp/aline-repo/`
+- [x] fixed from findings: resume restores `warmup_pred_steps` from the checkpoint
+      `config` (re-deriving the default silently changed a resumed from-scratch
+      run's phase schedule) + warns on `update_mode`/`freeze_base`/`random_frac`
+      mismatch; PG loss normalized by the effective on-policy episode count (a
+      plain batch mean halved the policy gradient under `simultaneous` +
+      `random_frac`); printed note when `--steps <= --warmup-pred-steps` (no policy
+      steps); `--episode-steps < --pool-size` guard; `policy_logits` non-empty-row
+      precondition documented; ξ-switch demo placements-only comment; oracle CLI
+      knobs added to this plan's flag list
+- [x] re-verified after fixes: phase-2/3 scratch all-pass (reproducibility and
+      resume-exactness still max|dW| = 0); CLI resume restores the from-scratch
+      schedule (note fires, no spurious warning)
 
 Phase 5 — validation run + gates:
 - [ ] validation fine-tune from the retained GP-1D 200k checkpoint (CUDA; ~10–20k
       episode-batch steps ≈ a few hours, see Risks — budget trimmed by the smoke
-      measurement), read the gates:
+      measurement). MEASURED 2026-06-12: ~1.06 s/step at full defaults (B=64, pool 128,
+      T=16, RTX 4060 laptop) ⇒ 5k ≈ 1.5 h, 10k ≈ 3 h, 20k ≈ 6 h. Budget decision
+      checked with the user before launch (agreed check-in). Read the gates:
       learned policy dominates random on predictive RMSE; competitive with US;
       parameter-ξ `log q(θ_true)` learned > random; targeting contrast positive;
       oracle calibration on acquired contexts comparable to the fixed-case gp1d
@@ -344,7 +392,8 @@ extension is thin.
   `--latent-context-prob`, `--latent-weight`, `--data-weight`); inherited `--warmup`
   is NOT a no-op (per-group linear LR warmup, Design 8). Rollout drivers: `policy`
   (sampled) and `random` during training (Design 7); `argmax`, `random`, and `us`
-  at evaluation only (Designs 10–11).
+  at evaluation only (Designs 10–11). Oracle-calibration knobs mirror gp1d:
+  `--oracle-episodes 4`, `--oracle-bins 64`, `--oracle-chunk 512`.
 - Artifacts: `artifacts/gp1d_aline.pt`, `artifacts/gp1d_aline.png`.
 
 ## Verification
