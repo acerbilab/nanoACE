@@ -43,11 +43,12 @@ Six demos:
   "Follow policy" lets the learned policy drive the episode (animated), with
   RMSE / log q(θ_true) tracked against the hidden truth. A secondary
   "your own data" mode gives free point editing with the advice still live.
-  **Local-only** (not deployed): the current weights are the extension's 5k
-  validation fine-tune — the policy beats random but its goal-targeting is
-  still subtle; swap in a longer-trained checkpoint by re-running export +
-  parity together. The tab and its tests self-skip/notice gracefully when
-  the blob is absent.
+  The deployed weights are the extension's 35k active-learning fine-tune — the
+  policy matches uncertainty sampling on prediction and shows a goal-dependent
+  targeting contrast (clearest on kernel identification); see
+  `extensions/aline/DEVLOG.md` for the honest readings. Re-running export +
+  parity together is the swap discipline for any future re-train. The tab and
+  its tests self-skip/notice gracefully when the blob is absent.
 
 ## Run locally
 
@@ -65,7 +66,7 @@ python playground/export_weights.py --task sbi_sir  --checkpoint artifacts/sbi_s
 python playground/export_weights.py --task bo1d     --checkpoint artifacts/bo1d.pt         --out playground/public/models/bo1d
 # AR-buffer tab (extensions/arbuffer/ retained concat-read checkpoint)
 python playground/export_weights.py --task gp1d_arbuffer --checkpoint artifacts/gp1d_arbuffer.pt --out playground/public/models/gp1d_arbuffer
-# ALINE tab (extensions/aline/ checkpoint; local-only — not in the deploy workflow)
+# ALINE tab (extensions/aline/ checkpoint)
 python playground/export_weights.py --task gp1d_aline --checkpoint artifacts/gp1d_aline.pt --out playground/public/models/gp1d_aline
 
 cd playground
@@ -179,7 +180,7 @@ environment (kernel matrices + Cholesky factors in float64) against
 
 Weights ship as **float16** (half the blob size). `export_weights.py` rounds each
 parameter with torch's `.half().float()` before serializing, and `parity.py`
-applies the *same* rounding before generating fixtures — so the shipped weights
+applies the _same_ rounding before generating fixtures — so the shipped weights
 and the references reflect identical values. The remaining gap is only arithmetic
 (PyTorch float32 vs JS float64, where the TS loader decodes the halves), so parity
 uses a combined relative+absolute tolerance rather than bit-parity. To regenerate

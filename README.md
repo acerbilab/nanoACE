@@ -71,13 +71,13 @@ Implemented modules:
   and a wrong runtime prior. This is the one example with no oracle.
 - [diagnostics.py](diagnostics.py): reusable grid-query helpers for marginal and
   two-variable AR diagnostics.
-- [playground/](playground/): a **non-core**, fully in-browser TypeScript demo
+- [playground/](playground/): a fully in-browser TypeScript demo
   (separate toolchain) where trained models run client-side — GP-1D, Gaussian,
   SIR, and BO-1D, with interactive conditioning, latent/prior controls, and
   oracle overlays where practical. BO-1D stays no-oracle and overlays
   optimum-location/value marginals on the editable regression plot. A fifth
   tab runs the AR-buffer extension's coherent joint sampling, and a sixth
-  (local-only) runs the ALINE extension's active-learning loop (see below).
+  runs the ALINE extension's active-learning loop (see below).
   See [playground/README.md](playground/README.md). The Python core stays
   torch-only; the playground is an example built on a parity-tested TS port of
   `ace.py`'s forward pass.
@@ -98,12 +98,12 @@ Implemented modules:
   ALINE (Huang et al., 2025) — joint amortized Bayesian inference and active
   data acquisition — on the GP-1D task, warm-started from a trained GP-1D
   checkpoint. The inference network is the unchanged core ACE (parameter and
-  predictive targets are QUERY tokens; the acquisition goal is *which target
-  tokens are active*); the only new model part is a small read-only policy
+  predictive targets are QUERY tokens; the acquisition goal is _which target
+  tokens are active_); the only new model part is a small read-only policy
   decoder that scores a candidate pool, trained with REINFORCE on
   self-estimated information gain, with a structural gradient firewall between
   the two. The inference path is asserted bit-equal to the base ACE forward.
-  A **local-only** playground tab runs the full acquisition loop in-browser
+  A playground tab runs the full acquisition loop in-browser
   against a hidden GP function (the user picks where to sample; the policy
   advises; goals switch live). See
   [extensions/aline/README.md](extensions/aline/README.md).
@@ -113,11 +113,12 @@ Implemented modules:
 Current playground weights are hosted [outside this repo](https://github.com/acerbilab/nanoACE-playground-weights).
 They are exported from retained runs under the shared multi-latent reveal DGP:
 Gaussian 80k steps, GP-1D 200k, SIR 100k, and BO-1D 200k — plus the AR-buffer
-model (a 200k concat-read fine-tune on top of the GP-1D checkpoint).
+model (a 200k concat-read fine-tune on top of the GP-1D checkpoint) and the
+ALINE model (a 35k active-learning fine-tune on top of the same GP-1D checkpoint).
 Local `artifacts/` and `playground/public/models/` remain gitignored in nanoACE.
 
 Next work: inspect the deployed Pages build against the public weights (now
-five models, including the AR-buffer tab), add manifest-level training
+six models, including the ALINE tab), add manifest-level training
 provenance on the next export, and consider whether the shared prior path
 warrants a discrete-latent runtime prior.
 

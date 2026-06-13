@@ -71,7 +71,7 @@ fold in the optimum-planting DGP destroys Gaussianity, and the other three examp
 already carry grid oracles): verification is `--scale-check` (data token values sit
 in `[-1, 1]`) plus the fixed three-prior diagnostic, read structurally -- the `x_opt`
 posterior should tighten/shift toward truth from the uniform to the correct prior, and
-the wrong prior should be *resisted* (posterior stays near the data, not the wrong prior)
+the wrong prior should be _resisted_ (posterior stays near the data, not the wrong prior)
 thanks to the epsilon-contaminated prior. The true function and true `(x_opt, y_opt)` are
 plotted as the reference.
 
@@ -177,15 +177,14 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   (`write_pool` + `PoolReader`, GP-1D and BO only; generate → save → train). GP-1D and BO
   split their sampler into `draw_instances` (cached physics) + `assemble` (RNG-free
   tokenization shared by the online and pooled paths); Gaussian and SIR stay online-only.
-- **`playground/` is a non-core example, not part of the core.** It is a Vite + TypeScript
-  in-browser demo that reimplements `ace.py`'s forward pass in TS (parity-tested against
-  the PyTorch model) so trained checkpoints run client-side. Current tabs cover GP-1D,
-  Gaussian, SIR, BO-1D, an AR-buffer joint-sampling tab (the
+- **`playground/` is a Vite + TypeScript in-browser demo** that reimplements `ace.py`'s forward pass in TS  
+  (parity-tested against the PyTorch model) so trained checkpoints run client-side.
+  Current tabs cover GP-1D, Gaussian, SIR, BO-1D, an AR-buffer joint-sampling tab (the
   `extensions/arbuffer/` model through a parity-tested TS port of its incremental
-  sampler; its tests self-skip when the local blob is absent), and a **local-only**
+  sampler; its tests self-skip when the local blob is absent), and an
   ALINE active-learning tab (the `extensions/aline/` model + a fixture-pinned TS
   port of the gp1d DGP as the hidden-function environment; same self-skip
-  discipline, not in the deploy workflow). The core stays
+  discipline, now part of the deploy workflow). The core stays
   torch-only and legible; do not let the JS toolchain or
   web concerns bleed into `ace.py` or the examples.
   User-facing playground text (hints, explainer modals, README) is didactic and
@@ -212,4 +211,4 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   candidate pool trained with REINFORCE on self-estimated information gain. Alternating
   NLL/policy phases with a structural φ/ψ gradient firewall; the inference path is
   asserted bit-equal to the base ACE forward (a permanent parity guard, not just
-  step-0). A local-only playground tab runs its acquisition loop in-browser.
+  step-0). A playground tab runs its acquisition loop in-browser.

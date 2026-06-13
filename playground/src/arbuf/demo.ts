@@ -73,8 +73,7 @@ const EXPLAINER = {
     band is its ordinary marginal prediction, and pinned latents condition the joint draws
     too.</p>
     ${aceFooter(
-      // OpenReview link is deliberate for now; switch to the paper's project page later.
-      'The buffer mechanism follows Hassan et al. (2026), <em>Efficient Autoregressive Inference for Transformer Probabilistic Models</em> (ICLR 2026) — <a href="https://openreview.net/forum?id=5bfUqlOhAH">OpenReview</a>.',
+      'The buffer mechanism follows Hassan et al. (2026), <em>Efficient Autoregressive Inference for Transformer Probabilistic Models</em> (ICLR 2026) — <a href="https://www.conorhassan.com/projects/artnp/">project page</a>.',
     )}`,
 };
 

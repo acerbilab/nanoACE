@@ -82,13 +82,15 @@ Matched comparison (both eval=512, same episode draws):
   with explicit per-snapshot `--save-checkpoint` names.
 
 **Done same day** (2026-06-13): the 35k artifact is now the canonical
-`artifacts/gp1d_aline.pt` the local-only playground tab serves; the 5k model is
+`artifacts/gp1d_aline.pt` the playground tab serves; the 5k model is
 preserved as `artifacts/gp1d_aline_5k.pt`. Swap followed the staleness
 discipline — re-exported the fp16 blob and regenerated the parity/env/demo
 fixtures *together*, then `npm test` green (37/37, incl. ALINE env + policy +
-teacher-forced chain parity). Deploy workflow unaffected (the ALINE tab is
-local-only; the blob is gitignored). Also done: `--eval-episodes` default raised
-128 → 512 (the under-power finding above).
+teacher-forced chain parity). The tab was then wired into the public deploy:
+`gp1d_aline` added to `pages.yml`'s copy + both validation lists (six models
+total), the fp16 blob pushed to the weights repo, and the `aline` branch merged
+to `main` via PR #3 — so the tab is no longer local-only. Also done:
+`--eval-episodes` default raised 128 → 512 (the under-power finding above).
 
 ---
 

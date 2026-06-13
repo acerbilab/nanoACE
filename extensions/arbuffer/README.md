@@ -2,7 +2,7 @@
 
 An extension that adds the causal autoregressive buffer of
 [Hassan et al. (2026), *Efficient Autoregressive Inference for Transformer
-Probabilistic Models*](https://openreview.net/forum?id=5bfUqlOhAH) (ICLR 2026)
+Probabilistic Models*](https://www.conorhassan.com/projects/artnp/) (ICLR 2026)
 on top of a **pretrained** nanoACE model. Local paper markdown is in
 [paper/](paper/).
 

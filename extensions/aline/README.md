@@ -148,7 +148,7 @@ itself persists afterwards by construction, since the policy is read-only and
 writes nothing back into the trunk. `aline.py` is task-agnostic (it knows
 `ace.py`, not `gp1d.py`); everything GP-specific lives in `gp1d_aline.py`.
 
-A **local-only** playground tab runs this model's full acquisition loop
+A playground tab runs this model's full acquisition loop
 in-browser (hidden GP function, user-chosen or policy-driven queries, live
 goal switching) — see `playground/README.md` and
 [docs/plans/PLAN-aline-playground.md](../../docs/plans/PLAN-aline-playground.md);
