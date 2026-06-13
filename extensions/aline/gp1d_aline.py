@@ -761,59 +761,103 @@ def make_demo(model: ALINE, args: argparse.Namespace) -> dict:
 def evaluate(model: ALINE, args: argparse.Namespace) -> ALDiagnostic:
     """Held-out evaluation: baselines, targeting contrast, oracle calibration."""
 
+    # Held-out episodes are i.i.d.; we pool `args.eval_episodes` of them over
+    # rollouts of at most `args.eval_chunk` so a large N fits in memory (the
+    # +-0.0x effects this extension measures need thousands of episodes, not
+    # hundreds — see the DEVLOG "n=2 credit fine-tune" entry). Each chunk is
+    # keyed to a distinct deterministic seed (`ci*stride + base`), so the set is
+    # reproducible and identical across checkpoints (a valid paired comparison).
+    # For eval_episodes <= eval_chunk this is one chunk at the original offsets
+    # 1..5 -> bit-identical to the pre-chunking single-batch eval.
+    chunk = max(1, getattr(args, "eval_chunk", 2048))
+    total = args.eval_episodes
+    stride = 100  # > the per-metric base offsets so chunk seeds never collide
+    plan: list[tuple[int, int]] = []
+    ci, done = 0, 0
+    while done < total:
+        sz = min(chunk, total - done)
+        plan.append((ci, sz))
+        ci, done = ci + 1, done + sz
+
+    def chunk_args(sz: int) -> argparse.Namespace:
+        return argparse.Namespace(**{**vars(args), "eval_episodes": sz})
+
+    def score_goal(ep: Episode, col: int) -> torch.Tensor:
+        ep.target.mask[:] = False
+        ep.target.mask[:, col] = True
+        pred = model(Batch(model.variables, ep.context, ep.target))
+        return pred.log_prob(ep.target)[:, col]  # [B], per episode
+
     rmse_curves = {}
     for name, driver in (("aline", "argmax"), ("random", "random"), ("us", "us")):
-        ep = eval_episodes(model, args, "pred", 1)
-        stats = rollout(model, ep, driver=driver, track_predictions=True, sigma_obs=args.sigma_obs)
-        err = stats["y_means"] - ep.y_star[:, None, :]
-        rmse_curves[name] = err.pow(2).mean(dim=(0, 2)).sqrt().cpu()
+        sq, cnt = None, 0
+        for c, sz in plan:
+            ep = eval_episodes(model, chunk_args(sz), "pred", c * stride + 1)
+            stats = rollout(model, ep, driver=driver, track_predictions=True, sigma_obs=args.sigma_obs)
+            err = stats["y_means"] - ep.y_star[:, None, :]  # [sz, T+1, M]
+            s = err.pow(2).sum(dim=(0, 2))
+            sq = s if sq is None else sq + s
+            cnt += sz * err.shape[2]
+        rmse_curves[name] = (sq / cnt).sqrt().cpu()
 
     logq_curves = {}
     for name, driver in (("aline", "argmax"), ("random", "random")):
-        ep = eval_episodes(model, args, "theta", 2)
-        stats = rollout(model, ep, driver=driver, sigma_obs=args.sigma_obs)
-        logq_curves[name] = stats["log_q"].mean(dim=0).cpu()
+        s, cnt = None, 0
+        for c, sz in plan:
+            ep = eval_episodes(model, chunk_args(sz), "theta", c * stride + 2)
+            stats = rollout(model, ep, driver=driver, sigma_obs=args.sigma_obs)
+            ss = stats["log_q"].sum(dim=0)
+            s = ss if s is None else s + ss
+            cnt += sz
+        logq_curves[name] = (s / cnt).cpu()
 
     # Targeting contrast: acquire under a matched single-latent goal vs the
     # mismatched predictive goal on identical episodes; score log q(theta_S | D_T).
     # Two instruments: lengthscale (weak for GP-1D — coverage queries pin it
     # anyway) and kernel (roughness identification wants tight local pairs,
     # prediction wants coverage — the goals genuinely conflict).
-    acquired: dict[str, Episode] = {}
-    for goal in ("ell", "kernel", "pred"):
-        ep = eval_episodes(model, args, goal, 3)
-        rollout(model, ep, driver="argmax", sigma_obs=args.sigma_obs)
-        acquired[goal] = ep
-
-    def score_goal(ep: Episode, col: int) -> float:
-        ep.target.mask[:] = False
-        ep.target.mask[:, col] = True
-        pred = model(Batch(model.variables, ep.context, ep.target))
-        return float(pred.log_prob(ep.target)[:, col].mean())
-
-    contrast = {
-        "ell_matched": score_goal(acquired["ell"], 0),
-        "ell_mismatched": score_goal(acquired["pred"], 0),
-        "kernel_matched": score_goal(acquired["kernel"], 2),
-        "kernel_mismatched": score_goal(acquired["pred"], 2),
-    }
+    csum = {"ell_matched": 0.0, "ell_mismatched": 0.0, "kernel_matched": 0.0, "kernel_mismatched": 0.0}
+    ccnt = 0
+    for c, sz in plan:
+        acquired: dict[str, Episode] = {}
+        for goal in ("ell", "kernel", "pred"):
+            ep = eval_episodes(model, chunk_args(sz), goal, c * stride + 3)
+            rollout(model, ep, driver="argmax", sigma_obs=args.sigma_obs)
+            acquired[goal] = ep
+        csum["ell_matched"] += float(score_goal(acquired["ell"], 0).sum())
+        csum["ell_mismatched"] += float(score_goal(acquired["pred"], 0).sum())
+        csum["kernel_matched"] += float(score_goal(acquired["kernel"], 2).sum())
+        csum["kernel_mismatched"] += float(score_goal(acquired["pred"], 2).sum())
+        ccnt += sz
+    contrast = {k: v / ccnt for k, v in csum.items()}
     contrast["ell_delta"] = contrast["ell_matched"] - contrast["ell_mismatched"]
     contrast["kernel_delta"] = contrast["kernel_matched"] - contrast["kernel_mismatched"]
 
-    ep = eval_episodes(model, args, "theta", 4)
+    # Oracle calibration is decoupled from the pooled N (it scores only a few
+    # acquired contexts against the grid oracle): draw a small dedicated batch.
+    n_oracle = max(1, min(args.oracle_episodes, total))
+    ep = eval_episodes(model, chunk_args(n_oracle), "theta", 4)
     rollout(model, ep, driver="argmax", sigma_obs=args.sigma_obs)
-    oracle_rows = [_marginal_row(model, ep, row, args) for row in range(min(args.oracle_episodes, args.eval_episodes))]
+    oracle_rows = [_marginal_row(model, ep, row, args) for row in range(n_oracle)]
 
     reward_stats = {}
     for fill in ("pred", "theta"):
-        ep = eval_episodes(model, args, fill, 5)
-        stats = rollout(model, ep, driver="policy", sigma_obs=args.sigma_obs)
-        r = stats["rewards"].flatten()
+        tot, rsum, sqsum = 0, 0.0, 0.0
+        rmin, rmax = float("inf"), float("-inf")
+        for c, sz in plan:
+            ep = eval_episodes(model, chunk_args(sz), fill, c * stride + 5)
+            stats = rollout(model, ep, driver="policy", sigma_obs=args.sigma_obs)
+            r = stats["rewards"].flatten()
+            tot += r.numel()
+            rsum += float(r.sum())
+            sqsum += float((r * r).sum())
+            rmin, rmax = min(rmin, float(r.min())), max(rmax, float(r.max()))
+        mean = rsum / tot
         reward_stats[fill] = {
-            "mean": float(r.mean()),
-            "std": float(r.std()),
-            "min": float(r.min()),
-            "max": float(r.max()),
+            "mean": mean,
+            "std": max(0.0, sqsum / tot - mean * mean) ** 0.5,
+            "min": rmin,
+            "max": rmax,
         }
 
     demo = make_demo(model, args)
@@ -1038,7 +1082,8 @@ def parse_args() -> argparse.Namespace:
         help="full reward-to-go credit; equivalent to --credit-n 0 (retained alias, overrides --credit-n)",
     )
     p.add_argument("--sigma-obs", type=float, default=0.0, help="observation noise added at lookup (0 = noiseless)")
-    p.add_argument("--eval-episodes", type=int, default=512)
+    p.add_argument("--eval-episodes", type=int, default=16384, help="held-out episodes pooled for the diagnostic (these +-0.0x effects need thousands; see DEVLOG)")
+    p.add_argument("--eval-chunk", type=int, default=2048, help="rollout sub-batch size for the pooled eval (memory cap; <= eval-episodes)")
     p.add_argument("--oracle-episodes", type=int, default=4, help="acquired contexts to score against the grid oracle")
     p.add_argument("--oracle-bins", type=int, default=64)
     p.add_argument("--oracle-chunk", type=int, default=512)

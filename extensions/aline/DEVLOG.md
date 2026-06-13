@@ -12,6 +12,104 @@ a local clone.
 
 ---
 
+## 2026-06-13 — n=2 credit fine-tune (10k): no material change vs 35k; 512-ep eval shown to be underpowered; default eval → 16k
+
+Ran the n-step knob from the 35k endpoint and checked it properly. The headline
+is a **negative result** plus a **methodological correction** that outlives it.
+
+**The run.** Warm-started 10k fine-tune from `artifacts/gp1d_aline_35k.pt`
+(`--load-checkpoint` → strict base+policy load, **fresh** optimizers + a fresh
+10k cosine cycle; `--warmup-pred-steps` auto-resolves to 0), `--credit-n 2` the
+only credit change, `--policy-lr 1e-4 --warmup 500` to be gentle on the
+already-plateaued policy, defaults otherwise. ~3.5 h, avg 1.27 s/step; artifact
+`artifacts/gp1d_aline_n2.pt` (+ `.png`/`.log`). **No myopic n=1 control**
+(deliberately skipped), so nothing here is attributable to the credit window
+vs. "10k more steps + LR restart."
+
+**The run's printed 512-episode diagnostic looked like a targeting win** — ℓ
+contrast δ +0.013 (35k) → +0.092, kernel δ +0.141 → +0.165, θ log q above
+random, plus a scary calibration blip (acquired-context kernel KL mean 0.31,
+one context at 1.12). All of it prompted a significance check.
+
+**None of it survives.** A paired re-analysis scores both checkpoints on the
+*same* `EVAL_SEED`-keyed episodes (episodes are i.i.d., so a single large-N
+bootstrap is the correct and complete uncertainty estimate — multiple eval
+seeds add nothing, they are the same i.i.d. draws partitioned) and tracks each
+paired delta (n2 − 35k) as N grows:
+
+| paired δ (n2 − 35k) | N=512 | N=2048 | N=16384 |
+| --- | --- | --- | --- |
+| ℓ contrast | **+0.079** \*sig\* | +0.007 | −0.003 (n.s.) |
+| kernel contrast | +0.024 | +0.030 | +0.007 (n.s.) |
+| θ log q margin | +0.011 | −0.001 | −0.001 (n.s.) |
+| RMSE@T (ALINE) | +0.007 | −0.009 \*sig\* | −0.002 \*sig\* |
+| RMSE gap-to-US | +0.008 | −0.009 \*sig\* | −0.004 \*sig\* |
+
+- **The ℓ-contrast "discovery" was the luck of the 512-episode draw.** At 16k
+  both checkpoints sit at ℓ contrast ≈ +0.04 (each individually significant —
+  the policy *does* target by goal — but identical between them). Kernel
+  contrast and θ-logq margin: both null at 16k.
+- **The only surviving cross-checkpoint difference is a ~1% predictive-RMSE
+  edge** (n2 0.189 vs 35k 0.192; gap-to-US smaller by 0.004). Flagged
+  significant at 16k, but held loosely: its point estimate wandered
+  +0.007 → −0.009 → −0.002 with non-overlapping CIs as N grew — the
+  heavy-tailed per-episode-MSE signature (squared error / log-density contrasts
+  have large outliers; the bootstrap is mildly anti-conservative for them until
+  N is large). The *nulls*, by contrast, are consistent across N and tightly
+  bounded — those are robust.
+- **The calibration scare was also a draw artifact.** Re-run with a fresh
+  oracle draw, n2's acquired-context kernel KL is 0.001–0.12 (the earlier "ep0
+  1.12" was that particular context). Calibration held through the joint
+  fine-tune, as at 35k.
+
+**Robust ALINE-vs-baseline facts (both checkpoints, tight 16k CIs):** ALINE
+beats random on θ log q (+0.04); **US still edges ALINE on predictive RMSE**
+(gap +0.010–0.013, significant). The latter **walks back the 35k entry's
+"within noise of uncertainty sampling on RMSE"** — that 0.005 gap was a
+512-episode artifact too; the real gap is small but nonzero.
+
+**Methodological takeaway (the durable part): the default 512-episode eval was
+underpowered for the ±0.0x effects this extension measures.** The 5k-entry
+correction ("128 under-powered → 512") understated it: 512 point estimates are
+themselves unstable to the eval-set draw. **Action taken:** `--eval-episodes`
+default 512 → **16384**, processed in `--eval-chunk` (default 2048) rollouts and
+pooled, so it fits the 4060; per-chunk seeds are `EVAL_SEED`-keyed so the set is
+reproducible and identical across checkpoints. The oracle-calibration draw is
+decoupled from the pooled N (a small dedicated batch). For
+`eval_episodes <= eval_chunk` (e.g. the smoke run's 16) it is one chunk at the
+original offsets — bit-identical to the pre-chunking single-batch eval. The
+chunked `evaluate` was verified to reproduce the standalone harness digit-for-
+digit at 16k.
+
+**Outcome:** n2 is **not promoted** — the served checkpoint stays the 35k
+`artifacts/gp1d_aline.pt`; n2 is retained separately as `gp1d_aline_n2.pt`. The
+paired-bootstrap harness is kept at `extensions/aline/scripts/analyze_n2.py`.
+
+**Next (TODO — not yet run): n=2 from the base ACE checkpoint, not the n=1
+policy.** The above fine-tune warm-started from the n=1-converged 35k policy at
+a deliberately gentle `--policy-lr 1e-4`, so it may have been trapped in the n=1
+basin rather than finding a distinct n=2 optimum — the nulls would then reflect
+"couldn't move," not "nothing to find." The clean test trains n=2 from the base
+GP-1D ACE checkpoint at the full recipe/budget:
+
+```
+extensions/aline/gp1d_aline.py --base-checkpoint artifacts/gp1d.pt \
+    --credit-n 2 --steps 35000 --save-checkpoint artifacts/gp1d_aline_n2_frombase.pt
+```
+
+(defaults otherwise: policy-lr 3e-4, no special warmup — match the 35k recipe).
+**It is controlled for free:** the existing 35k *is* the from-base, n=1,
+full-recipe baseline (warm-started from `gp1d.pt`, immediate rewards =
+`--credit-n 1`, defaults throughout), so this needs no new control — compare the
+two directly under the new 16k eval. Cost ~8–9 h. Caveat to keep in mind: the
+matched within-checkpoint contrasts (35k and n2 both ℓ ≈ +0.04, kernel ≈ +0.12)
+hint the ceiling may be the task (GP-1D coverage pins ℓ regardless), not the
+basin — in which case from-base n=2 will plateau in the same place. Optional
+cheaper probe first: a 10–15k from-base run to see whether the contrasts even
+*start* to diverge from the n=1 trajectory before committing the full budget.
+
+---
+
 ## 2026-06-13 — n-step credit knob (`--credit-n`) implemented
 
 The `--credit-n` knob queued in the PG-credit-assignment entry below is now
