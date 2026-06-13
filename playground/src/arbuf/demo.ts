@@ -141,7 +141,7 @@ export async function mountArbuf(el: HTMLElement): Promise<void> {
     { x: 0.5, y: 0.05 },
   ];
   const points: Point[] = defaultPoints.map((p) => ({ ...p }));
-  const pin: PinState = { kernel: null, ell: false, scale: false };
+  const pin: PinState = { kernel: 0, ell: false, scale: false };  // RBF selected by default
   let ellVal = 0.5 * (ellMeta.bound_lo + ellMeta.bound_hi);
   let scaleVal = 0.5 * (scaleMeta.bound_lo + scaleMeta.bound_hi);
   let samplerMode: "buffer" | "slow" = "buffer";

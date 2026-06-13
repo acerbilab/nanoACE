@@ -375,8 +375,8 @@ export async function mountAline(el: HTMLElement): Promise<void> {
     available = draw.poolX.map(() => true);
     available[draw.seedIdx] = false;
     obsIdx = [draw.seedIdx];
-    revealTruth = false;
-    revealBox.checked = false;
+    // The "reveal the hidden function" toggle is a sticky user preference:
+    // neither New function nor Restart resets it.
     history = [];
     recompute();
     pushHistory();
