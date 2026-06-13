@@ -180,9 +180,12 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
 - **`playground/` is a non-core example, not part of the core.** It is a Vite + TypeScript
   in-browser demo that reimplements `ace.py`'s forward pass in TS (parity-tested against
   the PyTorch model) so trained checkpoints run client-side. Current tabs cover GP-1D,
-  Gaussian, SIR, BO-1D, and an AR-buffer joint-sampling tab (the
+  Gaussian, SIR, BO-1D, an AR-buffer joint-sampling tab (the
   `extensions/arbuffer/` model through a parity-tested TS port of its incremental
-  sampler; its tests self-skip when the local blob is absent). The core stays
+  sampler; its tests self-skip when the local blob is absent), and a **local-only**
+  ALINE active-learning tab (the `extensions/aline/` model + a fixture-pinned TS
+  port of the gp1d DGP as the hidden-function environment; same self-skip
+  discipline, not in the deploy workflow). The core stays
   torch-only and legible; do not let the JS toolchain or
   web concerns bleed into `ace.py` or the examples.
   User-facing playground text (hints, explainer modals, README) is didactic and
@@ -201,4 +204,12 @@ prior, mode, mask`). `Batch` = `variables + context: Tokens + target: Tokens`. D
   fine-tune with the 50/50 curriculum). An automatic step-0 parity check guards the
   coupling to core internals (bitwise for the plain forward in both modes and for the
   buffered forward in separate-read mode; reported drift for the concat read): if
-  `ace.py`'s forward changes, the warm start fails loudly.
+  `ace.py`'s forward changes, the warm start fails loudly. And `extensions/aline/`,
+  ALINE (Huang et al., 2025): joint amortized inference + active data acquisition on
+  GP-1D, warm-started from a trained GP-1D checkpoint — the unchanged core ACE is the
+  inference network (the acquisition goal ξ = which target tokens are active; query
+  candidates are data QUERY tokens), plus a small read-only policy decoder over the
+  candidate pool trained with REINFORCE on self-estimated information gain. Alternating
+  NLL/policy phases with a structural φ/ψ gradient firewall; the inference path is
+  asserted bit-equal to the base ACE forward (a permanent parity guard, not just
+  step-0). A local-only playground tab runs its acquisition loop in-browser.

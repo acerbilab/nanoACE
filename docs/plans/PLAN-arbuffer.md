@@ -5,7 +5,7 @@ Status: COMPLETE (2026-06-11) — implemented + validated (20k fine-tune); the r
 100k–200k artifact run is deferred per plan (run separately, fresh `--steps` budget).
 
 Reference: Hassan et al. (2026), *Efficient Autoregressive Inference for Transformer
-Probabilistic Models* (ICLR 2026). Paper markdown in `temp/hassan2026efficient_*.md`
+Probabilistic Models* (ICLR 2026). Paper markdown in `extensions/arbuffer/paper/`
 (main + appendix; appendix A has the module/mask/algorithm details, H.2 the positional
 embedding ablation, H.5 the K=64 GP buffer-size ablation).
 

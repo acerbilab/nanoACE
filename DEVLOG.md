@@ -9,6 +9,48 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-12 — ALINE playground tab (local-only)
+
+- **The playground gained a sixth tab** running `extensions/aline/` in-browser:
+  a hidden GP function (an exact float64 TS port of the gp1d DGP, fixture-pinned
+  against `gp1d.draw_gp`) answers queries; the user only chooses *where* to
+  sample, with the learned acquisition policy rendered as advice — π(x | data,
+  goal) along the x-axis next to the classical uncertainty-sampling pick — a
+  live goal selector (click switches, shift-click combines parameter goals;
+  the untrained predictive+parameter mix is not selectable; mid-episode
+  switches), "Follow policy" auto-unrolling, and RMSE /
+  log q(θ_true) tracked against the hidden truth. A secondary "your own data"
+  mode keeps the advice live on free-edited points. The TS port adds a policy
+  decoder on top of the untouched base port (final-state reads from the
+  inherited forward; omission ≡ masking equivalences), parity-pinned per
+  policy block plus a teacher-forced episode chain. **Local-only**: the deploy
+  workflow is untouched; the 5k validation checkpoint serves the tab until the
+  longer fine-tune lands (then re-export + regenerate fixtures together, push
+  the blob, add `gp1d_aline` to pages.yml's two lists). Plan + verification:
+  [docs/plans/PLAN-aline-playground.md](docs/plans/PLAN-aline-playground.md);
+  TS deviations + eyeball notes in `extensions/aline/DEVLOG.md`.
+
+---
+
+## 2026-06-12 — ALINE extension (`extensions/aline/`): joint amortized inference + active acquisition
+
+- **Second `extensions/` entry: `extensions/aline/`** — ALINE (Huang et al., 2025,
+  NeurIPS), joint amortized Bayesian inference and active data acquisition, on the
+  GP-1D active-learning task, warm-started from the retained GP-1D checkpoint. The
+  ACE-native re-expression is the point: the inference network is the **unchanged**
+  core `ACE` (parameter/predictive targets are QUERY tokens; the paper's target
+  specifier ξ collapses into *which target tokens are active*, and query candidates
+  are data QUERY tokens), so the only new model surface is a small read-only policy
+  decoder trained with REINFORCE on self-estimated information gain, behind a
+  structural φ/ψ gradient firewall and a permanent bitwise parity guard on the
+  inference path. First validation run (5k): the policy learns (beats random on
+  both goal families, calibration kept); the US gap and the targeting contrasts
+  remain open at that budget. Design decisions, paper deviations, and run results
+  in `extensions/aline/DEVLOG.md`; plan + verification log in
+  [docs/plans/PLAN-aline.md](docs/plans/PLAN-aline.md).
+
+---
+
 ## 2026-06-12 — Per-tab playground explainers; retained AR-buffer weights swapped in
 
 - **Every playground tab gained a "?" explainer.** A small inline button at the end of

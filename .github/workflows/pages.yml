@@ -58,7 +58,7 @@ jobs:
       - name: Copy playground model weights
         run: |
           mkdir -p public/models
-          cp -R ../playground-models/bo1d ../playground-models/gp1d ../playground-models/gp1d_arbuffer ../playground-models/gaussian ../playground-models/sbi_sir public/models/
+          cp -R ../playground-models/bo1d ../playground-models/gp1d ../playground-models/gp1d_arbuffer ../playground-models/gp1d_aline ../playground-models/gaussian ../playground-models/sbi_sir public/models/
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -67,7 +67,7 @@ jobs:
       - run: npm ci
       - name: Require generated model weights
         run: |
-          for task in bo1d gp1d gp1d_arbuffer gaussian sbi_sir; do
+          for task in bo1d gp1d gp1d_arbuffer gp1d_aline gaussian sbi_sir; do
             manifest="public/models/$task/manifest.json"
             weights="public/models/$task/weights.bin"
             for file in "$manifest" "$weights"; do
@@ -86,7 +86,7 @@ jobs:
           node --input-type=module <<'JS'
           import { readFileSync, statSync } from "node:fs";
 
-          const tasks = ["bo1d", "gp1d", "gp1d_arbuffer", "gaussian", "sbi_sir"];
+          const tasks = ["bo1d", "gp1d", "gp1d_arbuffer", "gp1d_aline", "gaussian", "sbi_sir"];
           for (const task of tasks) {
             const dir = `public/models/${task}`;
             const manifest = JSON.parse(readFileSync(`${dir}/manifest.json`, "utf8"));

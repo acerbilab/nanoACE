@@ -76,11 +76,12 @@ Implemented modules:
   SIR, and BO-1D, with interactive conditioning, latent/prior controls, and
   oracle overlays where practical. BO-1D stays no-oracle and overlays
   optimum-location/value marginals on the editable regression plot. A fifth
-  tab runs the AR-buffer extension's coherent joint sampling (see below).
+  tab runs the AR-buffer extension's coherent joint sampling, and a sixth
+  (local-only) runs the ALINE extension's active-learning loop (see below).
   See [playground/README.md](playground/README.md). The Python core stays
   torch-only; the playground is an example built on a parity-tested TS port of
   `ace.py`'s forward pass.
-- [extensions/arbuffer/](extensions/arbuffer/): a **non-core** extension adding
+- [extensions/arbuffer/](extensions/arbuffer/): an extension adding
   the causal autoregressive buffer of Hassan et al. (2026) on top of a trained
   GP-1D checkpoint. Two target-read variants: a separate zero-init gated read
   (bit-exact warm start, frozen base) and the retained paper-style
@@ -93,6 +94,19 @@ Implemented modules:
   incremental sampler in the browser — the TS port follows the retained
   concat-read architecture and serves the retained 200k weights. See
   [extensions/arbuffer/README.md](extensions/arbuffer/README.md).
+- [extensions/aline/](extensions/aline/): an extension implementing
+  ALINE (Huang et al., 2025) — joint amortized Bayesian inference and active
+  data acquisition — on the GP-1D task, warm-started from a trained GP-1D
+  checkpoint. The inference network is the unchanged core ACE (parameter and
+  predictive targets are QUERY tokens; the acquisition goal is *which target
+  tokens are active*); the only new model part is a small read-only policy
+  decoder that scores a candidate pool, trained with REINFORCE on
+  self-estimated information gain, with a structural gradient firewall between
+  the two. The inference path is asserted bit-equal to the base ACE forward.
+  A **local-only** playground tab runs the full acquisition loop in-browser
+  against a hidden GP function (the user picks where to sample; the policy
+  advises; goals switch live). See
+  [extensions/aline/README.md](extensions/aline/README.md).
 - [DEVLOG.md](DEVLOG.md): design decisions and rationale. Read this before
   changing architecture or scope.
 

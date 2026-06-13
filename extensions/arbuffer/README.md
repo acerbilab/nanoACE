@@ -1,10 +1,10 @@
 # arbuffer — causal autoregressive buffer for nanoACE
 
-A **non-core extension** that adds the causal autoregressive buffer of
+An extension that adds the causal autoregressive buffer of
 [Hassan et al. (2026), *Efficient Autoregressive Inference for Transformer
 Probabilistic Models*](https://openreview.net/forum?id=5bfUqlOhAH) (ICLR 2026)
-on top of a **pretrained** nanoACE model. Paper markdown lives in the
-(gitignored) `temp/` folder on the development machine.
+on top of a **pretrained** nanoACE model. Local paper markdown is in
+[paper/](paper/).
 
 The base ACE model is a diagonal prediction map: joint samples come from
 `ace.sample_ar`, which appends each sampled point to the context and re-encodes
@@ -15,7 +15,7 @@ context encoding then serves any number of parallel draw streams — the demo
 draws 64 coherent GP function samples from one cached 4-point context.
 
 This extension is also the repository's extensibility demo. Adding a different
-inference architecture reuses almost everything and touches **no core file**.
+inference architecture reuses almost everything and touches no core file.
 
 Reused unchanged (imported from the core): the `Variable` / `Tokens` / `Batch`
 schema, the embedder (`ACE._embed`), the shared MDN + categorical heads and
@@ -148,11 +148,10 @@ to K=64 are trained in-distribution.
 
 ## Boundary
 
-Like `playground/`, this folder is **not part of the core**: `ace.py`,
-`train.py`, and the examples are unchanged and never import it. Unlike the
-playground it is torch-only and *may* reach into core internals (it subclasses
-`ACE`, calls `_embed`, and re-implements `ACEBlock`'s op order around the
-buffer stream) — the automatic step-0 parity check is what keeps that
+The core is unchanged: `ace.py`, `train.py`, and the examples never import
+this folder. The extension is torch-only and reaches into core internals
+(it subclasses `ACE`, calls `_embed`, and re-implements `ACEBlock`'s op order
+around the buffer stream) — the automatic step-0 parity check keeps that
 coupling honest: if the core forward changes, the warm start fails loudly.
 (The check is bitwise for the plain forward in both read modes and for the
 buffered forward in the default separate-read mode; the concat read's buffered

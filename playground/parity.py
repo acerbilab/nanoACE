@@ -36,6 +36,7 @@ from extensions.arbuffer.arbuffer import (  # noqa: E402  (non-core extension)
     load_buffered_checkpoint,
     sample_joint,
 )
+from extensions.aline.aline import load_aline_checkpoint  # noqa: E402  (non-core extension)
 
 OUT_DIR = Path(__file__).resolve().parent / "test" / "fixtures"
 
@@ -44,6 +45,14 @@ OUT_DIR = Path(__file__).resolve().parent / "test" / "fixtures"
 # (with a note) when the artifact is absent, so the four core fixture sets stay
 # regenerable.
 ARBUF_CKPT = REPO_ROOT / "artifacts" / "gp1d_arbuffer.pt"
+
+# The ALINE active-learning fine-tune (extensions/aline/; the 35k run, promoted
+# to the canonical name 2026-06-13 — see extensions/aline/DEVLOG.md; the 5k
+# validation artifact is preserved as gp1d_aline_5k.pt). Swap in a longer run by
+# re-running export + this script together. Parity fixtures are gated like
+# arbuffer's; the env fixture below is checkpoint-independent and regenerates on
+# every run.
+ALINE_CKPT = REPO_ROOT / "artifacts" / "gp1d_aline.pt"
 
 
 class TokenBuilder:
@@ -636,6 +645,195 @@ def arbuf_chain_case(model) -> dict:
     }
 
 
+@torch.no_grad()
+def aline_policy_case(model) -> dict:
+    """Policy-decoder reference: final trunk states + per-policy-block candidate
+    streams + logits on one compact all-active case.
+
+    Token row order matches the TS port (which omits inactive tokens instead of
+    masking): context rows, then the goal-target rows the policy reads, then the
+    candidate rows scored pointwise. The target deliberately mixes latent and
+    data QUERY goals for embedding coverage; the tab's actual goal sets are
+    subsets (covered by the chain case below).
+    """
+
+    device = next(model.parameters()).device
+    ctx_b = TokenBuilder()
+    for x, y in [(-0.7, 0.35), (-0.2, -0.15), (0.25, 0.6), (0.6, 0.1)]:
+        ctx_b.add(0, VALUE, x=x, value=y)
+    tgt_b = TokenBuilder()
+    tgt_b.add(1, QUERY, value=enc(model, 1, gp1d.EVAL_LOG_LENGTHSCALE))
+    tgt_b.add(2, QUERY, value=enc(model, 2, gp1d.EVAL_LOG_OUTPUTSCALE))
+    tgt_b.add(3, QUERY, value_index=gp1d.EVAL_KERNEL)
+    for x, y in [(-0.5, 0.2), (0.0, -0.1), (0.45, 0.3), (0.9, -0.2)]:
+        tgt_b.add(0, QUERY, x=x, value=y)
+    qry_b = TokenBuilder()
+    for x in (-0.95, -0.65, -0.35, -0.05, 0.2, 0.5, 0.75, 0.92):
+        qry_b.add(0, QUERY, x=x)
+
+    context = ctx_b.tokens(device)
+    target = tgt_b.tokens(device)
+    query = qry_b.tokens(device)
+    batch = Batch(model.variables, context, target)
+
+    pred, ctx_states, tgt_states = model.forward_with_states(batch)
+    plain = model(batch)
+    assert torch.equal(pred.cont_raw, plain.cont_raw), "forward_with_states drifted from forward"
+
+    # Manual policy replication (the run_case discipline): per-block candidate
+    # streams so a TS divergence localizes to a block. The no_grad/detach in
+    # policy_logits are gradient-only, so the values match exactly.
+    qry = model._embed(query)
+    per_qry = []
+    for blk in model.policy_blocks:
+        qry = blk(qry, ctx_states, tgt_states, query.mask, context.mask, target.mask)
+        per_qry.append(qry.clone())
+    logits = model.policy_head(model.policy_norm(qry)).squeeze(-1)
+    logits_model = model.policy_logits(query, ctx_states, tgt_states, context.mask, target.mask)
+    assert torch.allclose(logits, logits_model, atol=1e-6), "aline policy replication drifted"
+
+    return {
+        "context": ctx_b.json(),
+        "target": tgt_b.json(),
+        "query": qry_b.json(),
+        "ctx_states": ctx_states[0].tolist(),
+        "tgt_states": tgt_states[0].tolist(),
+        "per_policy_qry": [s[0].tolist() for s in per_qry],
+        "logits": logits_model[0].tolist(),
+        "cont_raw": pred.cont_raw[0].tolist(),
+        "log_prob": pred.log_prob(target)[0].tolist(),
+    }
+
+
+@torch.no_grad()
+def aline_chain_case(model) -> dict:
+    """Teacher-forced compact episode: the exact step semantics the TS tab
+    implements (compact all-active tokens; the goal xi = which target tokens
+    exist).
+
+    Pool 16 + 4 predictive x* drawn in ONE joint GP draw (the training layout);
+    seed observation = pool index 0; T = 6 with a mid-episode goal switch
+    (xi = {log_lengthscale} for steps 0-2, then xi = predictive over the 4 x*).
+    Per step: available candidates, policy logits, the argmax action (the TS
+    test REPLAYS these actions rather than re-deriving argmax, so fp tie-flips
+    cannot fail the build), and per-goal-token log-probs from
+    `Predictions.log_prob` (not the rollout's xi-averaged log_q).
+    """
+
+    device = next(model.parameters()).device
+    n_pool, m_star, t_steps, switch_at = 16, 4, 6, 3
+
+    gen = torch.Generator().manual_seed(20260612)
+    x_all = 2.0 * torch.rand(1, n_pool + m_star, generator=gen, dtype=torch.float64) - 1.0
+    kernel = torch.tensor([gp1d.EVAL_KERNEL], dtype=torch.long)
+    log_ell = torch.tensor([gp1d.EVAL_LOG_LENGTHSCALE], dtype=torch.float64)
+    log_scale = torch.tensor([gp1d.EVAL_LOG_OUTPUTSCALE], dtype=torch.float64)
+    y_all = gp1d.draw_gp(x_all, kernel, log_ell, log_scale, jitter=gp1d.GEN_JITTER, generator=gen)
+    pool_x = x_all[0, :n_pool].float().tolist()
+    pool_y = y_all[0, :n_pool].float().tolist()
+    star_x = x_all[0, n_pool:].float().tolist()
+    star_y = y_all[0, n_pool:].float().tolist()
+    ell_int = enc(model, 1, float(log_ell[0]))
+
+    def step_state(observed: list[int], available: list[int], xi: str):
+        ctx_b = TokenBuilder()
+        for i in observed:
+            ctx_b.add(0, VALUE, x=pool_x[i], value=pool_y[i])
+        tgt_b = TokenBuilder()
+        if xi == "ell":
+            tgt_b.add(1, QUERY, value=ell_int)
+        else:
+            for xs, ys in zip(star_x, star_y):
+                tgt_b.add(0, QUERY, x=xs, value=ys)
+        qry_b = TokenBuilder()
+        for i in available:
+            qry_b.add(0, QUERY, x=pool_x[i])
+        context = ctx_b.tokens(device)
+        target = tgt_b.tokens(device)
+        query = qry_b.tokens(device)
+        pred, ctx_states, tgt_states = model.forward_with_states(
+            Batch(model.variables, context, target)
+        )
+        logits = model.policy_logits(query, ctx_states, tgt_states, context.mask, target.mask)
+        return pred, target, logits
+
+    observed = [0]  # seed point
+    available = list(range(1, n_pool))
+    steps = []
+    for t in range(t_steps):
+        xi = "ell" if t < switch_at else "pred"
+        pred, target, logits = step_state(observed, available, xi)
+        pick = int(logits[0].argmax())
+        action = available[pick]
+        steps.append(
+            {
+                "xi": xi,
+                "available": list(available),
+                "logits": logits[0].tolist(),
+                "action": action,
+                "observed_y": pool_y[action],
+                "log_prob": pred.log_prob(target)[0].tolist(),
+            }
+        )
+        observed.append(action)
+        available.remove(action)
+
+    # Post-episode state under the predictive goal (no action; convergence check).
+    pred, target, _ = step_state(observed, available, "pred")
+    final_log_prob = pred.log_prob(target)[0].tolist()
+
+    return {
+        "pool_x": pool_x,
+        "pool_y": pool_y,
+        "star_x": star_x,
+        "star_y": star_y,
+        "ell_value_internal": ell_int,
+        "seed_index": 0,
+        "switch_at": switch_at,
+        "steps": steps,
+        "final_log_prob": final_log_prob,
+    }
+
+
+def aline_env_fixture() -> dict:
+    """Checkpoint-independent DGP fixture for the TS environment port: kernel
+    matrices and Cholesky factors in float64 on two fixed x-sets (one moderate,
+    one adversarial: clustered points + short lengthscale, hardest for the
+    Periodic kernel), all four kernels each."""
+
+    x_mod = torch.tensor([[-0.9, -0.55, -0.3, -0.05, 0.2, 0.45, 0.7, 0.95]], dtype=torch.float64)
+    x_adv = torch.tensor([[-0.41, -0.40, -0.39, 0.10, 0.11, 0.12, 0.80, 0.805]], dtype=torch.float64)
+    log_ell = torch.tensor([math.log(0.15)], dtype=torch.float64)
+    log_scale = torch.tensor([math.log(0.75)], dtype=torch.float64)
+
+    cases = []
+    for set_name, x in (("moderate", x_mod), ("clustered", x_adv)):
+        for k_idx, k_name in enumerate(gp1d.KERNELS):
+            kern = torch.tensor([k_idx], dtype=torch.long)
+            mat = gp1d._kernel_matrix(x, kern, log_ell, log_scale, jitter=gp1d.GEN_JITTER)
+            chol = torch.linalg.cholesky(mat)
+            cases.append(
+                {
+                    "set": set_name,
+                    "kernel": k_name,
+                    "kernel_index": k_idx,
+                    "x": x[0].tolist(),
+                    "log_ell": float(log_ell[0]),
+                    "log_scale": float(log_scale[0]),
+                    "K": mat[0].tolist(),
+                    "L": chol[0].tolist(),
+                }
+            )
+    return {
+        "jitter": gp1d.GEN_JITTER,
+        "period": 1.0,
+        "log_lengthscale_range": list(gp1d.LOG_LENGTHSCALE_RANGE),
+        "log_outputscale_range": list(gp1d.LOG_OUTPUTSCALE_RANGE),
+        "kernels": list(gp1d.KERNELS),
+        "cases": cases,
+    }
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     device = torch.device("cpu")
@@ -694,6 +892,28 @@ def main() -> None:
         print(f"wrote gp1d_arbuffer.parity.json ({len(payload['plain'])} plain cases + packed + chain)")
     else:
         print(f"skipped gp1d_arbuffer fixtures ({ARBUF_CKPT} not found)")
+
+    # ALINE (extensions/aline/): the env fixture is checkpoint-independent and
+    # regenerates on every run; the parity fixture is gated like arbuffer's.
+    env = aline_env_fixture()
+    (OUT_DIR / "gp1d_aline.env.json").write_text(json.dumps(env))
+    print(f"wrote gp1d_aline.env.json ({len(env['cases'])} cases)")
+
+    if ALINE_CKPT.exists():
+        aline_model = load_aline_checkpoint(str(ALINE_CKPT), device, gp1d.variables())
+        aline_model.eval()
+        quantize_fp16_inplace(aline_model)  # match the shipped fp16 weights
+        payload = {
+            # plain-forward cases on the ALINE checkpoint (reuses the GP case
+            # builders): pins the inherited base path through the export.
+            "plain": gp_cases(aline_model),
+            "policy": aline_policy_case(aline_model),
+            "chain": aline_chain_case(aline_model),
+        }
+        (OUT_DIR / "gp1d_aline.parity.json").write_text(json.dumps(payload))
+        print(f"wrote gp1d_aline.parity.json ({len(payload['plain'])} plain cases + policy + chain)")
+    else:
+        print(f"skipped gp1d_aline fixtures ({ALINE_CKPT} not found)")
 
 
 if __name__ == "__main__":

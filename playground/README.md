@@ -9,7 +9,7 @@ browser — no server, no backend.
 > The core stays torch-only and legible; this folder carries the JS/TS toolchain.
 > It is a frozen snapshot of the model's forward pass, kept honest by a parity test.
 
-Five demos:
+Six demos:
 
 - **GP-1D regression** — click to add/drag/delete points; watch the posterior
   predictive band, the kernel posterior, and the lengthscale/outputscale
@@ -33,6 +33,21 @@ Five demos:
   difference is felt directly. The weights are the retained 200k concat-read
   fine-tune (K=64, joint training); the tab and its tests self-skip/notice
   gracefully when the blob is absent locally.
+- **GP-1D active learning (ALINE)** — the `extensions/aline/` model: a hidden
+  GP function (sampled in-browser by an exact port of the gp1d DGP) answers
+  your queries, and you only choose **where** to sample — following or
+  ignoring ALINE's acquisition advice, rendered as the policy distribution
+  π(x | data, goal) along the bottom axis next to the classical
+  uncertainty-sampling pick. The goal selector (predict the function vs infer
+  lengthscale / outputscale / kernel) is live, including mid-episode;
+  "Follow policy" lets the learned policy drive the episode (animated), with
+  RMSE / log q(θ_true) tracked against the hidden truth. A secondary
+  "your own data" mode gives free point editing with the advice still live.
+  **Local-only** (not deployed): the current weights are the extension's 5k
+  validation fine-tune — the policy beats random but its goal-targeting is
+  still subtle; swap in a longer-trained checkpoint by re-running export +
+  parity together. The tab and its tests self-skip/notice gracefully when
+  the blob is absent.
 
 ## Run locally
 
@@ -50,6 +65,8 @@ python playground/export_weights.py --task sbi_sir  --checkpoint artifacts/sbi_s
 python playground/export_weights.py --task bo1d     --checkpoint artifacts/bo1d.pt         --out playground/public/models/bo1d
 # AR-buffer tab (extensions/arbuffer/ retained concat-read checkpoint)
 python playground/export_weights.py --task gp1d_arbuffer --checkpoint artifacts/gp1d_arbuffer.pt --out playground/public/models/gp1d_arbuffer
+# ALINE tab (extensions/aline/ checkpoint; local-only — not in the deploy workflow)
+python playground/export_weights.py --task gp1d_aline --checkpoint artifacts/gp1d_aline.pt --out playground/public/models/gp1d_aline
 
 cd playground
 npm install
@@ -82,6 +99,16 @@ npm test           # vitest: parity + orchestration + UI smoke tests
   the untouched base port, plus the tab's DOM-free `infer.ts` (context builder,
   static band pass, step-driveable `JointSampler`) and `demo.ts`. Separate-read
   checkpoints are rejected at load with a clear error.
+- `src/ace/aline.ts` + `src/aline/` — the ALINE tab: `ALINEModel` extends the
+  base port without touching it (`forwardWithStates` re-reads the inherited
+  forward's per-layer stacks and re-applies `final_norm`; the policy decoder
+  runs on `nn.ts` primitives, scoring only the supplied candidates — omission
+  replaces masking exactly, since neither targets nor candidates attend to
+  each other). `env.ts` is a float64 port of the gp1d data-generating process
+  (kernels, hyperprior, jitter, Cholesky) that samples the hidden episode
+  functions; `infer.ts` packs goal + latent + band + US-candidate rows into
+  one forward per step and slices only the goal rows for the policy;
+  `demo.ts` owns the episode UI.
 - `src/config.ts` — all tunable constants (OOD thresholds, view ranges, grid
   sizes) in one place.
 - `src/explain.ts` — the per-tab "?" explainer: each tab's hint line ends with a
@@ -140,6 +167,15 @@ layer), and a teacher-forced `sample_joint` chain (the exact incremental
 semantics the TS sampler implements). `parity.py` skips this block, and the TS
 tests self-skip, when the checkpoint/blob is absent — so `npm test` stays green
 on clones without local exports.
+
+The ALINE tab follows the same scheme (`gp1d_aline.parity.json`): plain forward
+(the inference path is the unchanged ACE forward), a policy case with
+per-policy-block candidate streams, and a teacher-forced compact episode with a
+mid-episode goal switch — the TS test replays the recorded actions (immune to
+argmax tie-flips) while asserting logits and per-goal-token log-probs. A
+separate, checkpoint-independent `gp1d_aline.env.json` pins the browser GP
+environment (kernel matrices + Cholesky factors in float64) against
+`gp1d.draw_gp`; its suite runs even without the blob.
 
 Weights ship as **float16** (half the blob size). `export_weights.py` rounds each
 parameter with torch's `.half().float()` before serializing, and `parity.py`
