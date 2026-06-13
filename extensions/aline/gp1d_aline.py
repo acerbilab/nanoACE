@@ -263,7 +263,7 @@ def rollout(
     train_pg: bool = False,
     random_frac: float = 0.0,
     use_baseline: bool = True,
-    reward_to_go: bool = False,
+    credit_n: int = 1,
     sigma_obs: float = 0.0,
     track_predictions: bool = False,
     on_step: Callable[[int, Episode], None] | None = None,
@@ -280,6 +280,11 @@ def rollout(
     only the small policy-side graphs are retained, since the trunk states
     enter the policy detached. With `random_frac > 0` the random-driven rows
     are excluded from the PG loss (off-policy).
+
+    `credit_n` sets the credit window — log pi_t is weighted by the sum of the
+    next `credit_n` rewards: 1 = immediate reward R_t only (myopic, the default);
+    `credit_n >= T` or `credit_n <= 0` = full reward-to-go (the unbiased
+    total-return credit); 1 < credit_n < T = an n-step window in between.
     """
 
     if train_pg and driver != "policy":
@@ -353,7 +358,21 @@ def rollout(
     if train_pg and pending_logpi:
         logpi = torch.stack(pending_logpi, dim=1)  # [B, T]
         onpolicy = torch.stack(pending_onpolicy, dim=1).to(logpi.dtype)
-        weights = reward_mat.flip(1).cumsum(dim=1).flip(1) if reward_to_go else reward_mat
+        # Credit window: weights[:, j] = sum_{k=j}^{j+credit_n-1} R_k. credit_n=1
+        # keeps only R_j (immediate/myopic); credit_n>=T or <=0 sums to the end
+        # (full reward-to-go). The window is rtg[:, j] - rtg[:, j+credit_n], built
+        # from the reverse-cumsum reward-to-go. The credit_n==1 and full branches
+        # reproduce the previous immediate / --reward-to-go weights bit-for-bit.
+        if credit_n == 1:
+            weights = reward_mat
+        else:
+            rtg = reward_mat.flip(1).cumsum(dim=1).flip(1)
+            if credit_n <= 0 or credit_n >= t_steps:
+                weights = rtg
+            else:
+                shifted = torch.zeros_like(rtg)
+                shifted[:, : t_steps - credit_n] = rtg[:, credit_n:]
+                weights = rtg - shifted
         if use_baseline:
             denom = onpolicy.sum(dim=0).clamp_min(1.0)
             baseline = (weights * onpolicy).sum(dim=0) / denom
@@ -511,7 +530,7 @@ def fit_episodes(
             train_pg=train_pg,
             random_frac=args.random_frac if train_nll else 0.0,
             use_baseline=not args.no_baseline,
-            reward_to_go=args.reward_to_go,
+            credit_n=0 if args.reward_to_go else args.credit_n,
             sigma_obs=args.sigma_obs,
         )
         if train_nll:
@@ -1005,7 +1024,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--random-frac", type=float, default=0.5, help="random-rollout row fraction in prediction steps")
     p.add_argument("--freeze-base", action="store_true", help="train the policy only; q_phi stays the base checkpoint")
     p.add_argument("--no-baseline", action="store_true", help="disable the batch-mean reward baseline")
-    p.add_argument("--reward-to-go", action="store_true", help="weight log pi_t by the reward-to-go instead of R_t")
+    p.add_argument(
+        "--credit-n",
+        type=int,
+        default=1,
+        help="PG credit window: weight log pi_t by the sum of the next n rewards "
+        "(1 = immediate/myopic, the default; >= episode-steps or <= 0 = full reward-to-go; "
+        "in between = an n-step window). Anticipatory credit grows with n.",
+    )
+    p.add_argument(
+        "--reward-to-go",
+        action="store_true",
+        help="full reward-to-go credit; equivalent to --credit-n 0 (retained alias, overrides --credit-n)",
+    )
     p.add_argument("--sigma-obs", type=float, default=0.0, help="observation noise added at lookup (0 = noiseless)")
     p.add_argument("--eval-episodes", type=int, default=512)
     p.add_argument("--oracle-episodes", type=int, default=4, help="acquired contexts to score against the grid oracle")
@@ -1048,6 +1079,8 @@ def main() -> None:
         )
     if args.episode_steps >= args.pool_size:
         raise SystemExit("--episode-steps must be < --pool-size (queries sample the pool without replacement)")
+    if args.reward_to_go and args.credit_n != 1:
+        print(f"note: --reward-to-go overrides --credit-n {args.credit_n} (using full reward-to-go)")
     if args.eval_only and not args.load_checkpoint:
         raise SystemExit("--eval-only requires --load-checkpoint")
 

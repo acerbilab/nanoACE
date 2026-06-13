@@ -12,6 +12,48 @@ a local clone.
 
 ---
 
+## 2026-06-13 — n-step credit knob (`--credit-n`) implemented
+
+The `--credit-n` knob queued in the PG-credit-assignment entry below is now
+wired into `rollout` and the CLI — a one-line generalization of the `weights`
+computation. log pi_t is weighted by the sum of the next n rewards,
+`weights[:, j] = sum_{k=j}^{j+n-1} R_k = rtg[:, j] − rtg[:, j+n]` (the
+reward-to-go shifted left by n):
+
+- `--credit-n 1` (default) = immediate reward only (myopic) — **bit-identical**
+  to the previous `reward_mat` path, so existing runs reproduce.
+- `--credit-n >= episode-steps` or `<= 0` = full reward-to-go — **bit-identical**
+  to the previous `--reward-to-go` path.
+- `1 < n < episode-steps` = the n-step window in between (anticipatory credit
+  grows with n).
+
+`--reward-to-go` is retained as the full-RTG alias (== `--credit-n 0`); if
+combined with an explicit `--credit-n` it overrides it (with a printed note).
+The change is confined to the PG *weighting* — the reward signal, the φ/ψ
+gradient firewall, and the bitwise inference-path parity guard are all
+untouched. Verified: a standalone check confirms n=1 == immediate (bit-equal),
+n>=T/<=0 == reward-to-go (bit-equal), and 1<n<T matches a brute-force windowed
+sum to float precision (the windowed branch differences two cumsums, so it is
+exact only up to rounding — the two endpoints are bit-equal); short
+`--credit-n 2` and `--reward-to-go` runs complete end-to-end with finite PG
+losses.
+
+This makes the myopic-pretrain → nonmyopic-fine-tune curriculum a one-flag
+experiment from the 35k endpoint: `--load-checkpoint artifacts/gp1d_aline.pt
+--credit-n 2` (or `--reward-to-go`), ideally with a lowered `--policy-lr` and a
+myopic control for the same step budget (see the feasibility discussion). The
+fallback ladder's "n-step (n=2–4)" rung is now executable.
+
+Known limitation: like `--reward-to-go` before it, `--credit-n` is **not**
+restored on `--resume` — it is read fresh from args and is absent from the
+phase-schedule mismatch-warning list (it does not affect the LR/phase schedule),
+so a resumed credit run must re-pass the flag or it silently reverts to
+immediate (n=1). The primary use here is `--load-checkpoint` (a fresh-optimizer
+warm-start fine-tune), which is unaffected; the footgun is only for interrupted
+`--resume` continuations.
+
+---
+
 ## 2026-06-13 — 35k run: undertraining confirmed; US gap closed; calibration improved; 128-ep eval was under-powered
 
 Longer fine-tune from the retained GP-1D 200k checkpoint, the pre-registered
