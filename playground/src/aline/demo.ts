@@ -196,7 +196,7 @@ export async function mountAline(el: HTMLElement): Promise<void> {
   const root = document.createElement("div");
   root.className = "al-root";
   root.innerHTML = `
-    <p class="al-hint">Active learning with ALINE
+    <p class="al-hint">Active learning with <a href="https://www.huangdaolang.com/aline/">ALINE</a>
       (<a href="https://github.com/acerbilab/nanoACE/tree/main/extensions/aline">extensions/aline</a>):
       click to measure a hidden function — the orange curve shows where the learned
       policy would measure next for the selected goal.</p>
