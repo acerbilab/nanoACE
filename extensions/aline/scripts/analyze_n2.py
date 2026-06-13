@@ -10,9 +10,11 @@ correct uncertainty estimate (no multi-seed needed; that would just be the same
 i.i.d. draws partitioned). Eval-only; reaches into the extension, changes no
 core file.
 
-Run from the repo root:
+Run from the repo root (defaults to 35k n=1 vs the n=2 fine-tune):
     .venv/Scripts/python.exe extensions/aline/scripts/analyze_n2.py
-Edit the two checkpoint paths in main() to compare a different pair.
+    .venv/Scripts/python.exe extensions/aline/scripts/analyze_n2.py \
+        artifacts/gp1d_aline_35k.pt artifacts/gp1d_aline_n2_frombase.pt n1 n2_frombase
+Positional args: PATH_A PATH_B [LABEL_A LABEL_B]; the paired delta is B - A.
 """
 
 from __future__ import annotations
@@ -106,8 +108,12 @@ def ci(s: np.ndarray) -> tuple[float, float]:
 
 
 def main() -> None:
-    A = load("artifacts/gp1d_aline_35k.pt")
-    B = load("artifacts/gp1d_aline_n2.pt")
+    path_a = sys.argv[1] if len(sys.argv) > 1 else "artifacts/gp1d_aline_35k.pt"
+    path_b = sys.argv[2] if len(sys.argv) > 2 else "artifacts/gp1d_aline_n2.pt"
+    label_a = sys.argv[3] if len(sys.argv) > 3 else "35k"
+    label_b = sys.argv[4] if len(sys.argv) > 4 else "n2"
+    A = load(path_a)
+    B = load(path_b)
     N = len(A["mse_aline"])
     print(f"\npooled N = {N} episodes,  {BOOT} bootstrap resamples")
     rng = np.random.default_rng(0)
@@ -127,8 +133,8 @@ def main() -> None:
         print(f"  logq@T  aline {m['logq_aline'].mean():+.4f}  random {m['logq_random'].mean():+.4f}")
         print(f"  ell delta {ed:+.4f}   kernel delta {kd:+.4f}")
 
-    agg("35k", A)
-    agg("n2", B)
+    agg(label_a, A)
+    agg(label_b, B)
 
     print("\n=== within-checkpoint (mean, 95% CI) ===")
     def within(label, m):
@@ -148,10 +154,10 @@ def main() -> None:
         tag = "" if lo <= 0 <= hi else "  *excludes 0*"
         print(f"  {'RMSE gap to US':16s} {rmse(m['mse_aline'])-rmse(m['mse_us']):+.4f}  95%CI [{lo:+.4f},{hi:+.4f}]{tag}")
 
-    within("35k", A)
-    within("n2", B)
+    within(label_a, A)
+    within(label_b, B)
 
-    print("\n=== PAIRED  n2 - 35k  (95% CI; excludes 0 => significant) ===")
+    print(f"\n=== PAIRED  {label_b} - {label_a}  (95% CI; excludes 0 => significant) ===")
     for cn, km, kmm in (("ell contrast", "ell_matched", "ell_mismatched"),
                         ("kernel contrast", "kernel_matched", "kernel_mismatched")):
         v = (B[km] - B[kmm]) - (A[km] - A[kmm])
