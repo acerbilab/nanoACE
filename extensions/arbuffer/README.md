@@ -23,12 +23,11 @@ spine, GP physics, and oracle diagnostics — and touches no core file.
 This extension is based on:
 
 ```bibtex
-@article{hassan2026efficient,
+@inproceedings{hassan2026efficient,
   title={Efficient Autoregressive Inference for Transformer Probabilistic Models},
   author={Conor Hassan and Nasrulloh Ratu Bagus Satrio Loka and Cen-You Li and Daolang Huang and Paul Edmund Chang and Yang Yang and Francesco Silvestrin and Samuel Kaski and Luigi Acerbi},
   year={2026},
-  journal={International Conference on Learning Representations},
-  url={https://openreview.net/forum?id=5bfUqlOhAH}
+  booktitle={The Fourteenth International Conference on Learning Representations (ICLR 2026)},
 }
 ```
 
