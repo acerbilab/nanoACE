@@ -1023,9 +1023,11 @@ example.
 - **Short verification runs stay loose.** The Gaussian toy oracle should catch broken
   heads and obviously wrong posterior moments, but it should not become a brittle
   strict-quality gate around stochastic training.
-- **Checkpoint artifact deferred.** A tiny toy `state_dict` can ship only after the toy
-  trains reliably and the blob is genuinely small. Design the code so retraining is the
-  fallback; do not design the repository around a checkpoint.
+- **Checkpoint artifact (resolved 2026-06-14).** Originally deferred until the toy trained
+  reliably and the blob was genuinely small; the trained checkpoints are now published on
+  Hugging Face (`lacerbi/nanoACE`) as an optional fetch. The principle still holds:
+  retraining is the fallback (each checkpoint ships config + seed), and the repository is
+  not designed around a checkpoint.
 
 ### Data layer
 
@@ -1073,8 +1075,9 @@ example.
   Bayesian posterior on a grid, and a matching posterior predictive diagnostic. Runs
   online and remains small; longer local runs can save a checkpoint/plot for inspection.
   - **An optional pretrained checkpoint is useful** because it would make `gaussian_toy.py`
-    instant and provide a stable regression anchor. Distribution is deferred until the
-    trained artifact is small and worth keeping. See Open questions.
+    instant and provide a stable regression anchor. Distribution is **resolved (2026-06-14):**
+    the trained checkpoints are published on Hugging Face (`lacerbi/nanoACE`) as an optional
+    fetch — see the dated entry at the top and the resolved Open question below.
 - **Example 2: GP-1D regression.** Lengthscale/outputscale as continuous latents,
   **plus kernel selection as a discrete latent** (this is what exercises the discrete
   path so it isn't dead code). Use a **deliberately diverse kernel set** (RBF, Matern,
