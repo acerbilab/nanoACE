@@ -59,6 +59,25 @@ canonical files: the four core examples (`gaussian_toy.pt` 80k, `gp1d.pt` 200k,
 
 ---
 
+## 2026-06-14 — Cross-platform default install + separate `requirements-cuda.txt`
+
+- **What changed.** `requirements.txt` is now the platform PyPI torch wheel
+  (`torch==2.11.0`): CPU on Windows, MPS on macOS, CUDA-bundled on Linux. The maintainer's
+  NVIDIA-on-Windows CUDA 12.8 build (`torch==2.11.0+cu128`, via the PyTorch `cu128`
+  `--extra-index-url`) moved to a separate `requirements-cuda.txt`. The README/AGENTS command
+  examples were made cross-platform too — activate the venv, then call `python`, instead of a
+  Windows-only `.venv\Scripts\python.exe`. Commits `359bc37`, `7c06701`.
+- **Why.** The models are small enough to train and run on CPU, so forcing every clone onto a
+  Windows-specific CUDA wheel was wrong for a "read and run anywhere" example repo. The
+  cross-platform default makes a fresh clone work on macOS / Linux / Windows-CPU with no
+  package-index gymnastics; the CUDA wheel is opt-in for the workstation that needs it. The
+  pinned versions are unchanged (`2.11.0`); only the default-vs-optional-CUDA split is new.
+- **Supersedes** the present-tense "the project currently pins `torch==2.11.0+cu128`"
+  environment notes in the Gaussian-toy implementation entry and the Initial-design Layout
+  section (both corrected inline to point here).
+
+---
+
 ## 2026-06-12 — ALINE playground tab (local-only)
 
 - **The playground gained a sixth tab** running `extensions/aline/` in-browser:
@@ -843,9 +862,11 @@ example.
   and a lightweight checkpoint under `artifacts/`, but these are convenience outputs
   rather than load-bearing repository assets. `--eval-only --load-checkpoint` verifies a
   saved checkpoint.
-- **Environment.** The project currently pins the PyTorch CUDA wheel tested on this
+- **Environment.** Initially the project pinned the PyTorch CUDA wheel tested on this
   workstation: `torch==2.11.0+cu128`, PyTorch CUDA runtime 12.8, and the RTX 4060 Laptop
-  GPU.
+  GPU. **Superseded 2026-06-14:** the default install is now cross-platform
+  (`requirements.txt` → `torch==2.11.0`); that cu128 build moved to `requirements-cuda.txt`.
+  See the dated entry above.
 
 ---
 
@@ -1097,9 +1118,11 @@ example.
 - `data.py`        — offline sharded data pools (`write_pool` + `PoolReader`)
 - `train.py`       — shared training loop, checkpointing, config, and resume
 - Dependencies: **torch only** in the core; plotting imports are isolated to `gaussian_toy.py`.
-  Match the pinned workstation-tested stack unless there is a specific reason to change it:
-  `torch==2.11.0+cu128` via `https://download.pytorch.org/whl/cu128` on the RTX 4060
-  Laptop GPU. Single dataclass config, no config framework.
+  The default install is cross-platform (`requirements.txt` → `torch==2.11.0`); the
+  NVIDIA-on-Windows CUDA build lives in `requirements-cuda.txt` (`torch==2.11.0+cu128` via
+  `https://download.pytorch.org/whl/cu128`). _(Originally this said to match the pinned cu128
+  workstation stack on the RTX 4060 Laptop GPU; superseded 2026-06-14 — see the dated entry.)_
+  Single dataclass config, no config framework.
 
 ### Open questions
 
