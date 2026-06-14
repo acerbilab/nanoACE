@@ -9,6 +9,56 @@ Simulation and Inference* (AISTATS 2025). Paper markdown lives in `paper/`.
 
 ---
 
+## 2026-06-14 — Source checkpoints published to Hugging Face (`lacerbi/nanoACE`)
+
+This resolves the **"How to distribute optional checkpoints"** open question from the
+Initial-design entry. The full-precision PyTorch checkpoints (the `.pt` files from
+`--save-checkpoint`, `{cfg, seed, state_dict}` + optional `config` provenance) now live on
+the Hugging Face Hub at
+[`lacerbi/nanoACE`](https://huggingface.co/lacerbi/nanoACE), a public model repo. Six
+canonical files: the four core examples (`gaussian_toy.pt` 80k, `gp1d.pt` 200k,
+`sbi_sir.pt` 100k, `bo1d.pt` 200k) and the two extension fine-tunes
+(`gp1d_arbuffer.pt`, the retained 200k concat-read; `gp1d_aline.pt`, the served 35k).
+
+- **Two kinds of weights, kept distinct.** HF holds the **source checkpoints** —
+  full-precision, loadable straight back into the example scripts via
+  `load_checkpoint(path, device)`. The **fp16 browser blobs** (manifest + `weights.bin`)
+  stay in the separate `acerbilab/nanoACE-playground-weights` repo, copied in by the Pages
+  workflow; those are derived *from* the source checkpoints. Don't conflate the two homes.
+- **Why HF, and the constraints it satisfies.** The Initial-design "Open questions" already
+  earmarked HF ("a larger model hosted on HF and lazy-downloaded"). It keeps the three
+  rules that entry set for any distribution scheme: (1) the core stays **torch-only** — the
+  fetch is an optional extra (`huggingface_hub`), never required to read/run/train; (2) the
+  checkpoint ships **config + seed**, so it is regenerable, not a mystery binary; (3) it is
+  an **example artifact**, not the packaged "runtime product" non-goal. HF's transparent LFS
+  also avoids the playground route's "still a Git LFS pointer" failure mode. Namespace
+  `lacerbi` is personal-now (can transfer to an `acerbilab` org later, losslessly with
+  redirects).
+- **Provenance caveat.** The four core checkpoints carry only `{cfg, seed}` (their `config`
+  provenance is absent — they predate that save behavior), so their step counts come from
+  this DEVLOG, not the file. The two extension checkpoints carry full `config` (so steps,
+  base checkpoint, and run flags are self-documenting). The HF model card records each
+  model's architecture (`cfg`) and seed, and step counts from here.
+- **Fetch path is a one-liner; no committed helper.** Documented in `README.md` and the
+  model card: `hf_hub_download("lacerbi/nanoACE", "gp1d.pt")` → `gp1d.load_checkpoint(...)`.
+  Deliberately **no** `fetch_checkpoint()` wrapper and **no** `requirements-hf.txt` — a
+  task→filename lookup and a one-package install are below the bar for committed machinery
+  (the repo avoids experiment-management apparatus). `huggingface_hub` is a documented
+  optional `pip install`, kept out of core `requirements.txt`.
+- **Linking.** Root `README.md` gains a "Trained weights" subsection with a direct-link
+  table (`…/resolve/main/<file>.pt`) to all six; each extension `README.md` links its own
+  checkpoint; `playground/README.md` cross-references the source-checkpoint home so the two
+  weight homes are mutually discoverable.
+- **Aline = the deployed 35k (`gp1d_aline.pt`), verified SHA256-identical to
+  `gp1d_aline_35k.pt`.** Uploaded now for consistency with what the playground serves;
+  newer `n2` aline runs are in progress and will replace it on HF (re-upload) once one is
+  promoted to deployed — same swap discipline as the playground (re-export + re-parity
+  together). Scratch/experimental/superseded checkpoints (the arbuffer `k128`/`k32`/
+  `concat20k` variants, the aline `5k`/`n2`/`n2_frombase`/`smoke` variants, the
+  `_review_pool_*` data shards) were deliberately excluded.
+
+---
+
 ## 2026-06-12 — ALINE playground tab (local-only)
 
 - **The playground gained a sixth tab** running `extensions/aline/` in-browser:

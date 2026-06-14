@@ -56,6 +56,11 @@ python extensions/arbuffer/gp1d_arbuffer.py --eval-only --load-checkpoint artifa
 
 Common artifacts: `artifacts/gp1d_arbuffer.pt`, `artifacts/gp1d_arbuffer.png`.
 
+The retained fine-tune is published on Hugging Face as
+[`gp1d_arbuffer.pt`](https://huggingface.co/lacerbi/nanoACE/resolve/main/gp1d_arbuffer.pt)
+(in [`lacerbi/nanoACE`](https://huggingface.co/lacerbi/nanoACE), alongside the base
+`gp1d.pt`); fetch it with `huggingface_hub` and load with `--load-checkpoint`.
+
 The fine-tune draws the same GP physics as `gp1d.py` at a larger point budget
 (`--n-points 128`): context candidates as in the base (`n_context ~ U{1..20}`,
 same latent-reveal mixture, so pinned-latent contexts stay in-distribution *with*

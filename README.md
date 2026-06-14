@@ -56,10 +56,41 @@ For how it works, read these (and [DEVLOG.md](DEVLOG.md) for the why):
 training/checkpoint/CLI spine, `data.py` the optional offline data pool, and
 `diagnostics.py` the grid-query helpers.
 
-Trained playground weights live
-[outside this repo](https://github.com/acerbilab/nanoACE-playground-weights)
-(Gaussian 80k, GP-1D 200k, SIR 100k, BO-1D 200k, plus the two extension
-fine-tunes); local `artifacts/` and `playground/public/models/` stay gitignored.
+### Trained weights
+
+There are two kinds of weights, in two homes:
+
+- **Full-precision source checkpoints** (the `.pt` files written by
+  `--save-checkpoint`) live on Hugging Face at
+  [`lacerbi/nanoACE`](https://huggingface.co/lacerbi/nanoACE). Each loads straight
+  back into its example script:
+
+  | Checkpoint | Example / extension | Steps |
+  |---|---|---|
+  | [`gaussian_toy.pt`](https://huggingface.co/lacerbi/nanoACE/resolve/main/gaussian_toy.pt) | Gaussian ACEP | 80k |
+  | [`gp1d.pt`](https://huggingface.co/lacerbi/nanoACE/resolve/main/gp1d.pt) | GP-1D | 200k |
+  | [`sbi_sir.pt`](https://huggingface.co/lacerbi/nanoACE/resolve/main/sbi_sir.pt) | SIR SBI | 100k |
+  | [`bo1d.pt`](https://huggingface.co/lacerbi/nanoACE/resolve/main/bo1d.pt) | BO-1D | 200k |
+  | [`gp1d_arbuffer.pt`](https://huggingface.co/lacerbi/nanoACE/resolve/main/gp1d_arbuffer.pt) | [arbuffer](extensions/arbuffer/README.md) | 200k |
+  | [`gp1d_aline.pt`](https://huggingface.co/lacerbi/nanoACE/resolve/main/gp1d_aline.pt) | [aline](extensions/aline/README.md) | 35k |
+
+  Fetching one needs only the optional `huggingface_hub` (`pip install
+  huggingface_hub` — the core stays torch-only; this is never required to read,
+  run, or train):
+
+  ```python
+  from huggingface_hub import hf_hub_download
+  import gp1d
+  path = hf_hub_download("lacerbi/nanoACE", "gp1d.pt")
+  model = gp1d.load_checkpoint(path, "cpu")   # ready to evaluate / sample
+  ```
+
+- **fp16 browser blobs** (a manifest + `weights.bin` per model) for the playground
+  live in the separate
+  [acerbilab/nanoACE-playground-weights](https://github.com/acerbilab/nanoACE-playground-weights)
+  repo and are derived from the source checkpoints above.
+
+Local `artifacts/` and `playground/public/models/` stay gitignored.
 
 ## Setup
 

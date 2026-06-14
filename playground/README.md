@@ -139,6 +139,12 @@ so ordinary nanoACE clones stay small. The Pages workflow checks out that
 repository beside the app and copies the model directories into
 `playground/public/models/` before building.
 
+These are the **fp16 browser blobs** (a manifest + `weights.bin` per model),
+derived by `export_weights.py` from the **full-precision source checkpoints**,
+which are published on Hugging Face at
+[`lacerbi/nanoACE`](https://huggingface.co/lacerbi/nanoACE) — two distinct homes
+for two distinct artifacts (browser blobs here, source `.pt` there).
+
 To regenerate local blobs from checkpoints, use the project venv at the repo
 root:
 

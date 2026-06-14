@@ -56,6 +56,11 @@ python extensions/aline/gp1d_aline.py --eval-only --load-checkpoint artifacts/gp
 
 Common artifacts: `artifacts/gp1d_aline.pt`, `artifacts/gp1d_aline.png`.
 
+The served fine-tune is published on Hugging Face as
+[`gp1d_aline.pt`](https://huggingface.co/lacerbi/nanoACE/resolve/main/gp1d_aline.pt)
+(in [`lacerbi/nanoACE`](https://huggingface.co/lacerbi/nanoACE), alongside the base
+`gp1d.pt`); fetch it with `huggingface_hub` and load with `--load-checkpoint`.
+
 Episodes use the gp1d physics at a larger point budget: a 128-point candidate
 pool plus 32 predictive-target locations per episode (one joint CPU float64 draw;
 pool observations are lookups, noiseless by default), one random seed point, and
