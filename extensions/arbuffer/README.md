@@ -3,8 +3,7 @@
 An extension that adds the causal autoregressive buffer of
 [Hassan et al. (2026), *Efficient Autoregressive Inference for Transformer
 Probabilistic Models*](https://www.conorhassan.com/projects/artnp/) (ICLR 2026)
-on top of a **pretrained** nanoACE GP-1D model. Local paper markdown is in
-[paper/](paper/).
+on top of a **pretrained** nanoACE GP-1D model.
 
 The base ACE model is a diagonal prediction map: joint samples come from
 `ace.sample_ar`, which appends each sampled point to the context and re-encodes
@@ -18,6 +17,22 @@ joint density evaluation.
 It is also the repository's **extensibility demo**. Adding this inference
 architecture reuses almost everything — the schema, embedder, heads, training
 spine, GP physics, and oracle diagnostics — and touches no core file.
+
+## Reference
+
+This extension is based on:
+
+```bibtex
+@article{hassan2026efficient,
+  title={Efficient Autoregressive Inference for Transformer Probabilistic Models},
+  author={Conor Hassan and Nasrulloh Ratu Bagus Satrio Loka and Cen-You Li and Daolang Huang and Paul Edmund Chang and Yang Yang and Francesco Silvestrin and Samuel Kaski and Luigi Acerbi},
+  year={2026},
+  journal={International Conference on Learning Representations},
+  url={https://openreview.net/forum?id=5bfUqlOhAH}
+}
+```
+
+Local paper markdown is in [paper/](paper/).
 
 ## Run
 

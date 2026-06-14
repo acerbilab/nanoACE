@@ -5,7 +5,6 @@ Acerbi (2025), *ALINE: Joint Amortization for Bayesian Inference and Active
 Data Acquisition* (NeurIPS 2025;
 [project page](https://www.huangdaolang.com/aline/)) — on top of an
 **unchanged** nanoACE model, on the paper's GP active-learning task (§4.1).
-Local paper markdown is in [paper/](paper/).
 
 ALINE couples two things in one network: an amortized inference model `q_φ`
 (posteriors over latents, predictive distributions over data) and an acquisition
@@ -22,6 +21,21 @@ are latent QUERY tokens, predictive targets are data QUERY tokens, and ξ is jus
 flip. The inference network is the **unchanged** core `ACE`; the only new model
 surface is a small read-only policy decoder. That thesis — and why it is worth
 reading the code for — is developed in the local [DEVLOG.md](DEVLOG.md).
+
+## Reference
+
+This extension is based on:
+
+```bibtex
+@inproceedings{huang2025aline,
+  title={ALINE: Joint Amortization for Bayesian Inference and Active Data Acquisition},
+  author={Daolang Huang and Xinyi Wen and Ayush Bharti and Samuel Kaski and Luigi Acerbi},
+  booktitle={The Thirty-ninth Annual Conference on Neural Information Processing Systems (NeurIPS 2025)},
+  year={2025},
+}
+```
+
+Local paper markdown is in [paper/](paper/).
 
 ## Run
 
