@@ -82,9 +82,10 @@ From the repo root, with a trained GP-1D checkpoint (`python gp1d.py
 --save-checkpoint artifacts/gp1d.pt`):
 
 ```powershell
-# warm-started joint fine-tune (the validated 5k recipe; ~1.5 h on an RTX 4060)
+# warm-started joint fine-tune from a trained GP-1D checkpoint
+# (the served model is 35k steps, ~8-9 h on an RTX 4060; use fewer --steps for a quick look)
 .\.venv\Scripts\python.exe extensions\aline\gp1d_aline.py `
-    --base-checkpoint artifacts\gp1d.pt --steps 5000 `
+    --base-checkpoint artifacts\gp1d.pt --steps 35000 `
     --save-checkpoint artifacts\gp1d_aline.pt --ckpt-every 1000
 
 # short smoke run (from scratch, CPU-friendly)
@@ -123,17 +124,17 @@ experiment.
 - **Targeting contrasts**: log q(ℓ_true | D_T) and log q(kernel_true | D_T)
   after acquiring under the matched vs a mismatched goal on identical episodes.
 
-**Honest performance note (5k validation run, 2026-06-12).** At 5k episode
-batches (≈2.5k policy updates, <1% of the paper's episode count) the policy
-**learns**: predictive RMSE 0.220 vs random 0.248 (below along the whole
-curve), parameter log q −0.124 vs random −0.147, rewards still climbing at the
-end, and `q_φ` stayed oracle-calibrated through the joint fine-tune (kernel
-KL 0.002–0.025 on acquired contexts). But **uncertainty sampling still wins on
-prediction** (0.194), and both targeting contrasts are **null** at this budget
-(ℓ: −0.043 vs −0.042; kernel: −0.272 vs −0.266) — query placement differs by
-goal in the demo panel, but does not yet buy measurable log q. Read as
-undertraining (the pre-registered fallback order: longer run first); the full
-gate readings and interpretation live in [DEVLOG.md](DEVLOG.md).
+**What to expect.** The served model (a 35k-step joint fine-tune) learns a
+working policy: it beats a random-query baseline on parameter inference
+(θ log q), keeps `q_φ` oracle-calibrated, and targets by goal — acquiring under
+a parameter goal measurably improves that parameter's posterior, most clearly
+for the discrete **kernel** goal (coverage-style queries already pin the
+lengthscale, so its goal-specific gain is smaller). The honest trade-off:
+classical **uncertainty sampling still edges ALINE on pure predictive RMSE** by
+a small margin. Effects on this task are small (≈0.0x in log q / RMSE) and need
+thousands of held-out episodes to measure reliably, so the diagnostic pools a
+large episode set by default. Full numbers, error bars, and the
+credit-assignment (`--credit-n`) experiments are in [DEVLOG.md](DEVLOG.md).
 
 ## Boundary
 
