@@ -436,7 +436,7 @@ paper under `extensions/<name>/paper/`.
 ## Acknowledgments
 
 nanoACE is developed by the [Machine and Human Intelligence (MHI) group](https://www.helsinki.fi/en/researchgroups/machine-and-human-intelligence)
-at the University of Helsinki, with substantial help from AI coding assistants
+at the University of Helsinki, with AI coding agents
 (Claude Code and Codex). Work on nanoACE was supported by the [Research Council
 of Finland](https://www.aka.fi/en/) (Flagship programme: Finnish Center for Artificial Intelligence FCAI;
 and grants 358980 and 356498) and by the research environment provided by [ELLIS
