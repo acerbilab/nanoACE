@@ -1,28 +1,14 @@
 # nanoACE
 
 nanoACE is a small, readable, and fully operational implementation of the
-[Amortized Conditioning Engine (ACE)](https://acerbilab.github.io/amortized-conditioning-engine/):
+[Amortized Conditioning Engine (ACE)](https://acerbilab.github.io/amortized-conditioning-engine/)
+(Chang et al., [AISTATS 2025](#references)):
 treat data, interpretable latents, and runtime prior information as tokens;
 condition on one token set; predict distributions over another token set.
 
 The goal is a reasonably self-contained source that a human or coding agent can
 read end to end and extend. The original research code is stored in
 [this other repo](https://github.com/acerbilab/amortized-conditioning-engine/).
-
-## Reference
-
-This project is based on:
-
-```bibtex
-@article{chang2025amortized,
-  title={Amortized Probabilistic Conditioning for Optimization, Simulation and Inference},
-  author={Chang, Paul E and Loka, Nasrulloh and Huang, Daolang and Remes, Ulpu and Kaski, Samuel and Acerbi, Luigi},
-  journal={28th Int. Conf. on Artificial Intelligence & Statistics (AISTATS 2025)},
-  year={2025}
-}
-```
-
-Local paper markdown is in [paper/](paper/).
 
 ## What's inside
 
@@ -376,11 +362,11 @@ point rather than a constraint. The invariants are:
 - the model uses separated context self-attention and target-to-context
   cross-attention.
 
-The internal token representation is intentionally explicit. Data values stay in
-task coordinates. Bounded continuous latent values are encoded to internal
-`[-1, 1]` coordinates at token boundaries; native-coordinate prediction helpers
-on `Predictions` decode means/variances/samples and add the affine density
-Jacobian when needed.
+The central data structure is the token batch below. Data values stay in task
+coordinates; bounded continuous latent values are encoded to internal `[-1, 1]`
+coordinates at token boundaries (native-coordinate prediction helpers on
+`Predictions` decode means/variances/samples and add the affine density Jacobian
+when needed).
 
 ```python
 Batch(
@@ -399,3 +385,49 @@ Tokens(
     mask: BoolTensor[B, T],
 )
 ```
+
+For the full cross-file picture — how `_embed` turns `mode` into a payload, the
+`ACEBlock` attention, the shared MDN + categorical heads, `sample_ar`, and the
+`train.py` spine — see the
+[**Architecture (the cross-file picture)**](AGENTS.md#architecture-the-cross-file-picture)
+section of `AGENTS.md`; the design decisions and their rationale start with the
+[**Initial design**](DEVLOG.md#2026-06-06--initial-design) entry in `DEVLOG.md`.
+
+## References
+
+The work in this repository is based on the following papers. The core model is
+the Amortized Conditioning Engine (ACE):
+
+```bibtex
+@article{chang2025amortized,
+  title={Amortized Probabilistic Conditioning for Optimization, Simulation and Inference},
+  author={Chang, Paul E and Loka, Nasrulloh and Huang, Daolang and Remes, Ulpu and Kaski, Samuel and Acerbi, Luigi},
+  journal={28th Int. Conf. on Artificial Intelligence & Statistics (AISTATS 2025)},
+  year={2025}
+}
+```
+
+The two extensions in [extensions/](extensions/) build on further work — the
+causal autoregressive buffer (arbuffer) and ALINE:
+
+```bibtex
+@article{hassan2026efficient,
+  title={Efficient Autoregressive Inference for Transformer Probabilistic Models},
+  author={Conor Hassan and Nasrulloh Ratu Bagus Satrio Loka and Cen-You Li and Daolang Huang and Paul Edmund Chang and Yang Yang and Francesco Silvestrin and Samuel Kaski and Luigi Acerbi},
+  year={2026},
+  journal={International Conference on Learning Representations},
+  url={https://openreview.net/forum?id=5bfUqlOhAH}
+}
+```
+
+```bibtex
+@inproceedings{huang2025aline,
+  title={ALINE: Joint Amortization for Bayesian Inference and Active Data Acquisition},
+  author={Daolang Huang and Xinyi Wen and Ayush Bharti and Samuel Kaski and Luigi Acerbi},
+  booktitle={The Thirty-ninth Annual Conference on Neural Information Processing Systems (NeurIPS 2025)},
+  year={2025},
+}
+```
+
+Local paper markdown for ACE is in [paper/](paper/); each extension keeps its own
+paper under `extensions/<name>/paper/`.
