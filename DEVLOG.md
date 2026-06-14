@@ -1107,8 +1107,12 @@ example.
   gate (brittle against stochastic training).
 - **Online gen as a one-flag option** — resolved: not a flag; it's the generator-as-
   function (see Data layer).
-- **How to distribute optional checkpoints** (deferred — decide once there is a real
-  trained artifact). Options on the table: a tiny toy checkpoint committed in-repo (keeps
+- **How to distribute optional checkpoints** — **resolved (2026-06-14):** the
+  full-precision source checkpoints are published on the Hugging Face Hub at
+  `lacerbi/nanoACE` (the HF route this bullet anticipated); `huggingface_hub` is a
+  documented optional fetch and the core stays torch-only. See the dated entry at the
+  top of this file. Original deferral and options weighed, kept for history: decide once
+  there is a real trained artifact. Options on the table: a tiny toy checkpoint committed in-repo (keeps
   the Gaussian example instant + offline; sub-MB, no Git LFS, plain `state_dict`); a larger model
   hosted on HF and lazy-downloaded (natural home for the multi-MB GP model); or both
   (two-tier). Principles to preserve for any option: core stays **torch-only** (any
