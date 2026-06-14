@@ -33,6 +33,7 @@ import argparse
 import hashlib
 import importlib
 import json
+import re
 import subprocess
 import sys
 from dataclasses import asdict
@@ -94,6 +95,26 @@ def _json_safe(obj):
     return str(obj)
 
 
+# A Windows drive root (`C:\` / `C:/`), a UNC share, or a POSIX root (`\` / `/`).
+_ABS_PATH = re.compile(r"^([A-Za-z]:[\\/]|[\\/])")
+
+
+def _redact_abs_paths(obj):
+    """Basename any absolute-path string so the published manifest can't leak an
+    OS username or local directory layout. The full training config is shipped
+    deliberately (this repo's models carry config + seed to stay reproducible),
+    so relative paths like `artifacts/gp1d.pt` are kept — they reveal nothing and
+    `base_checkpoint` is useful provenance; only the absolute-path vector is cut.
+    Runs after `_json_safe`, so every leaf is already a plain string."""
+    if isinstance(obj, dict):
+        return {k: _redact_abs_paths(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_abs_paths(v) for v in obj]
+    if isinstance(obj, str) and _ABS_PATH.match(obj):
+        return re.split(r"[\\/]", obj)[-1]  # keep only the final path component
+    return obj
+
+
 def build_provenance(checkpoint_path: str | Path) -> dict:
     """Training-provenance block: what run produced these weights.
 
@@ -117,7 +138,9 @@ def build_provenance(checkpoint_path: str | Path) -> dict:
         return prov
     prov["seed"] = payload.get("seed")
     prov["step"] = payload.get("step")
-    prov["config"] = _json_safe(config)
+    # The full config is published deliberately (reproducibility); strip only
+    # absolute paths so a public manifest can't carry a username / local layout.
+    prov["config"] = _redact_abs_paths(_json_safe(config))
     return prov
 
 
