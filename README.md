@@ -398,7 +398,7 @@ section of `AGENTS.md`; the design decisions and their rationale start with the
 ## References
 
 The work in this repository is based on the following papers. The core model is
-the Amortized Conditioning Engine (ACE):
+the [Amortized Conditioning Engine (ACE)](https://acerbilab.github.io/amortized-conditioning-engine/):
 
 ```bibtex
 @inproceedings{chang2025amortized,
@@ -410,7 +410,7 @@ the Amortized Conditioning Engine (ACE):
 ```
 
 The two extensions in [extensions/](extensions/) build on further work — the
-causal autoregressive buffer (arbuffer) and ALINE:
+[causal autoregressive buffer](https://www.conorhassan.com/projects/artnp/) (arbuffer) and [ALINE](https://www.huangdaolang.com/aline/):
 
 ```bibtex
 @inproceedings{hassan2026efficient,
@@ -437,7 +437,7 @@ paper under `extensions/<name>/paper/`.
 
 nanoACE is developed by the [Machine and Human Intelligence (MHI) group](https://www.helsinki.fi/en/researchgroups/machine-and-human-intelligence)
 at the University of Helsinki, with substantial help from AI coding assistants
-(Claude Code and Codex). Work on nanoACE was supported by the Research Council
-of Finland (Flagship programme: Finnish Center for Artificial Intelligence FCAI;
-and grants 358980 and 356498) and by the research environment provided by ELLIS
-Institute Finland.
+(Claude Code and Codex). Work on nanoACE was supported by the [Research Council
+of Finland](https://www.aka.fi/en/) (Flagship programme: Finnish Center for Artificial Intelligence FCAI;
+and grants 358980 and 356498) and by the research environment provided by [ELLIS
+Institute Finland](https://www.ellisinstitute.fi/).
