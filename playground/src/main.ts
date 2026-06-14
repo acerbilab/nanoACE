@@ -78,6 +78,35 @@ function setupAceInfoModal(): void {
   });
 }
 
+function setupReferencesModal(): void {
+  const openBtn = document.querySelector<HTMLButtonElement>(".footer-refs-btn");
+  const modal = document.getElementById("refs-modal");
+  if (!openBtn || !modal) return;
+  // Scope the close button to this modal — the per-tab explainers also use
+  // `.ace-modal-close`, so a document-wide query would be order-dependent.
+  const closeBtn = modal.querySelector<HTMLButtonElement>(".ace-modal-close");
+  if (!closeBtn) return;
+
+  const close = () => {
+    modal.hidden = true;
+    openBtn.setAttribute("aria-expanded", "false");
+    openBtn.focus();
+  };
+  const open = () => {
+    modal.hidden = false;
+    openBtn.setAttribute("aria-expanded", "true");
+    closeBtn.focus();
+  };
+  openBtn.addEventListener("click", open);
+  closeBtn.addEventListener("click", close);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) close();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) close();
+  });
+}
+
 async function mount(): Promise<void> {
   const gpEl = document.getElementById("gp");
   const gaussianEl = document.getElementById("gaussian");
@@ -138,4 +167,5 @@ async function mount(): Promise<void> {
 setupTabs();
 setupFullscreenToggle();
 setupAceInfoModal();
+setupReferencesModal();
 void mount();

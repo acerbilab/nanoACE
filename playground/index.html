@@ -201,6 +201,41 @@
         font: inherit;
         cursor: pointer;
       }
+      .ace-modal .ref-entry {
+        margin-top: 14px;
+      }
+      .ace-modal .ref-entry > span {
+        display: block;
+        font-size: 13px;
+        color: #374151;
+      }
+      .ace-modal pre {
+        margin: 6px 0 0;
+        padding: 10px 12px;
+        overflow-x: auto;
+        background: #f6f8fa;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font:
+          12px/1.45 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+        color: #1f2937;
+        white-space: pre;
+      }
+      .footer-refs-btn {
+        appearance: none;
+        border: 0;
+        background: none;
+        padding: 0;
+        margin: 0;
+        color: var(--accent);
+        font: inherit;
+        cursor: pointer;
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
@@ -263,17 +298,26 @@
 
     <footer>
       <p>
-        Demo built on
-        <a href="https://github.com/acerbilab/nanoACE">nanoACE</a>, a small
-        readable implementation of the Amortized Conditioning Engine (<a
+        Built on
+        <a href="https://github.com/acerbilab/nanoACE">nanoACE</a>, a
+        <em>lite</em> implementation of the Amortized Conditioning Engine (<a
           href="https://acerbilab.github.io/amortized-conditioning-engine/"
           >ACE</a
-        >) — work by the
+        >) · Work by the
         <a
           href="https://www.helsinki.fi/en/researchgroups/machine-and-human-intelligence"
-          >Machine and Human Intelligence research group</a
+          >MHI research group</a
         >
-        at the University of Helsinki and collaborators.
+        at the University of Helsinki and collaborators. ·
+        <button
+          class="footer-refs-btn"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="refs-modal"
+          aria-expanded="false"
+        >
+          Refs. &amp; acks.
+        </button>
       </p>
     </footer>
 
@@ -352,6 +396,84 @@
           <a href="https://acerbilab.github.io/amortized-conditioning-engine/"
             >project page</a
           >.
+        </p>
+      </div>
+    </div>
+
+    <div class="ace-modal" id="refs-modal" hidden>
+      <div
+        class="ace-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="refs-modal-title"
+      >
+        <div class="ace-modal-head">
+          <h2 id="refs-modal-title">References &amp; acknowledgments</h2>
+          <button class="ace-modal-close" type="button">Close</button>
+        </div>
+        <p>
+          This demo is based on the following work from our group and
+          collaborators.
+        </p>
+
+        <div class="ref-entry">
+          <span
+            ><strong><a href="https://acerbilab.github.io/amortized-conditioning-engine/">ACE</a></strong> — Chang et al. (AISTATS 2025), the core
+            model.</span
+          >
+          <pre>
+@inproceedings{chang2025amortized,
+  title={Amortized Probabilistic Conditioning for Optimization, Simulation and Inference},
+  author={Chang, Paul E and Loka, Nasrulloh and Huang, Daolang and Remes, Ulpu and Kaski, Samuel and Acerbi, Luigi},
+  booktitle={The Twenty-eighth International Conference on Artificial Intelligence and Statistics (AISTATS 2025)},
+  year={2025}
+}</pre
+          >
+        </div>
+
+        <div class="ref-entry">
+          <span
+            ><strong><a href="https://www.conorhassan.com/projects/artnp/">AR buffer</a></strong> — Hassan et al. (ICLR 2026), the GP-1D
+            joint-draws (AR) tab.</span
+          >
+          <pre>
+@inproceedings{hassan2026efficient,
+  title={Efficient Autoregressive Inference for Transformer Probabilistic Models},
+  author={Conor Hassan and Nasrulloh Ratu Bagus Satrio Loka and Cen-You Li and Daolang Huang and Paul Edmund Chang and Yang Yang and Francesco Silvestrin and Samuel Kaski and Luigi Acerbi},
+  year={2026},
+  booktitle={The Fourteenth International Conference on Learning Representations (ICLR 2026)}
+}</pre
+          >
+        </div>
+
+        <div class="ref-entry">
+          <span
+            ><strong><a href="https://www.huangdaolang.com/aline/">ALINE</a></strong> — Huang et al. (NeurIPS 2025), the GP-1D
+            active-learning (ALINE) tab.</span
+          >
+          <pre>
+@inproceedings{huang2025aline,
+  title={ALINE: Joint Amortization for Bayesian Inference and Active Data Acquisition},
+  author={Daolang Huang and Xinyi Wen and Ayush Bharti and Samuel Kaski and Luigi Acerbi},
+  booktitle={The Thirty-ninth Annual Conference on Neural Information Processing Systems (NeurIPS 2025)},
+  year={2025}
+}</pre
+          >
+        </div>
+
+        <h3>Acknowledgments</h3>
+        <p>
+          nanoACE is developed by the
+          <a
+            href="https://www.helsinki.fi/en/researchgroups/machine-and-human-intelligence"
+            >Machine and Human Intelligence (MHI) group</a
+          >
+          at the University of Helsinki, with substantial help from AI coding
+          assistants. Work on nanoACE was supported by the
+          <a href="https://www.aka.fi/en/">Research Council of Finland</a>
+          (Flagship programme: Finnish Center for Artificial Intelligence FCAI;
+          and grants 358980 and 356498) and by the research environment provided
+          by <a href="https://www.ellisinstitute.fi/">ELLIS Institute Finland</a>.
         </p>
       </div>
     </div>
