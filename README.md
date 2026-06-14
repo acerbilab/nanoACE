@@ -63,15 +63,9 @@ fine-tunes); local `artifacts/` and `playground/public/models/` stay gitignored.
 
 ## Setup
 
-Use a local virtual environment. The current requirements pin the PyTorch CUDA
-wheel that has been tested on this workstation:
-
-- `torch==2.11.0+cu128`
-- PyTorch CUDA runtime 12.8
-- NVIDIA RTX 4060 Laptop GPU
-- `PyYAML` (only used by `train.py`'s optional `--config`; pulled in by `requirements.txt`)
-
-Create and activate a virtual environment, then install the requirements:
+Use a local virtual environment. nanoACE depends only on PyTorch, plus
+`matplotlib` (plots) and `PyYAML` (the optional `--config`). The models are small
+enough to train and run on CPU, so the default install is cross-platform:
 
 ```bash
 python -m venv .venv
@@ -79,6 +73,14 @@ python -m venv .venv
 #   bash:        source .venv/bin/activate
 #   PowerShell:  .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
+
+That pulls the default PyTorch wheel for your platform — CPU on Windows, MPS on
+macOS, CUDA-bundled on Linux. For an **NVIDIA GPU on Windows**, install the tested
+CUDA 12.8 build instead (Linux already has CUDA above; macOS has no CUDA):
+
+```bash
+pip install -r requirements-cuda.txt
 ```
 
 The commands below assume an activated venv, so they call `python` directly. On

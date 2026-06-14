@@ -1,5 +1,7 @@
---extra-index-url https://download.pytorch.org/whl/cu128
-
-torch==2.11.0+cu128
+# Default, cross-platform install: the platform PyTorch wheel from PyPI
+# (CPU on Windows, MPS on macOS, CUDA-bundled on Linux). For an NVIDIA GPU on
+# Windows, use requirements-cuda.txt instead (Linux already gets CUDA here;
+# macOS has no CUDA).
+torch==2.11.0
 matplotlib==3.10.1
 PyYAML==6.0.2

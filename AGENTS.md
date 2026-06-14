@@ -26,7 +26,8 @@ activating, use `.\.venv\Scripts\python.exe` instead.
 # setup: create the venv, activate it, install deps
 #   bash:        source .venv/bin/activate
 #   PowerShell:  .\.venv\Scripts\Activate.ps1
-# (CUDA wheel pinned in requirements.txt: torch 2.11.0+cu128)
+# (default torch is cross-platform; for an NVIDIA GPU on Windows use
+#  requirements-cuda.txt — torch 2.11.0+cu128)
 python -m venv .venv
 pip install -r requirements.txt
 

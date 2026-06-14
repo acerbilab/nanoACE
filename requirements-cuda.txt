@@ -1,0 +1,10 @@
+# NVIDIA GPU build (CUDA 12.8) — the maintainer's tested configuration. Needed
+# mainly on Windows: the default PyPI torch there is CPU-only, so GPU support
+# comes from the +cu128 wheel on the PyTorch index below. (On Linux the default
+# requirements.txt already bundles CUDA; macOS has no CUDA.)
+#
+#   pip install -r requirements-cuda.txt
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+matplotlib==3.10.1
+PyYAML==6.0.2
